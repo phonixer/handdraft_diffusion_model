@@ -67,6 +67,43 @@ class MLP(nn.Module):
         x = self.mid_layer(x)
         x = self.final_layer(x)
         return x
+    
+
+class Diffusion(nn.Module):
+    def __init__(self, loss_type, beta_schedule = 'linear', clip_denoised = True, **kwargs):
+        super(Diffusion, self).__init__()
+
+        self.state_dim = kwargs['obs_dim']
+        self.action_dim = kwargs['act_dim']
+        self.hidden_dim = kwargs['hidden_dim']
+        self.device = torch.devise(kwargs['device'])
+        self.T = kwargs['T']
+
+        if beta_schedule == 'linear':
+            betas = torch.linspace(0.0001, 0.02,self.T, dtype=torch.float32)
+
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, 0)  # [1, 2, 3]  -> [1, 1*2, 1*2*3]
+        alphas_cumprod_prev = torch.cat([torch.tensor([1.0], device=self.device), alphas_cumprod[:-1]], dim=0)
+
+
+        # 想一下，需要把参数都注册到模型中
+        # 这样在训练的时候，就可以通过model.parameters()来获取所有的参数
+        self.betas = nn.Parameter(betas, requires_grad=False)
+        self.register_buffer('betas', betas)
+        self.register_buffer('alphas', alphas)
+        self.register_buffer('alphas_cumprod', alphas_cumprod)
+        self.register_buffer('alphas_cumprod_prev', alphas_cumprod_prev)
+
+        # 前向过程
+        self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
+        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1.0 - alphas_cumprod))
+        
+        # 反向过程
+        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        self.register_buffer('posterior_variance', posterior_variance)
+        
+
 
 
 
