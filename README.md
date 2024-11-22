@@ -53,3 +53,23 @@ For example, test with 8 GPUs:
 cd tools
 bash scripts/dist_test.sh 8 --cfg_file cfgs/waymo/mtr+100_percent_data.yaml --ckpt ../output/waymo/mtr+100_percent_data/my_first_exp/ckpt/checkpoint_epoch_30.pth --extra_tag my_first_exp --batch_size 80 
 ```
+
+
+waymo 数据集的表头
+dict_keys(['track_infos', 'dynamic_map_infos', 'map_infos', 'scenario_id', 'timestamps_seconds', 'current_time_index', 'sdc_track_index', 'objects_of_interest', 'tracks_to_predict'])
+
+检查 HDMap 数据：
+
+如果配置中没有设置 WITHOUT_HDMAP 或者其值为 False，则继续处理 HDMap 数据。
+检查 info['map_infos']['all_polylines'] 是否为空。如果为空，则用形状为 (2, 7) 的零数组填充，并打印警告信息。
+创建地图数据：
+
+调用 self.create_map_data_for_center_objects 方法，为中心对象创建地图数据。该方法返回三个值：map_polylines_data、map_polylines_mask 和 map_polylines_center。
+map_polylines_data：形状为 (num_center_objects, num_topk_polylines, num_points_each_polyline, 9) 的数组，表示中心对象的地图折线数据。
+map_polylines_mask：形状为 (num_center_objects, num_topk_polylines, num_points_each_polyline) 的布尔掩码数组。
+map_polylines_center：中心对象的地图折线中心数据。
+更新返回字典：
+
+将 map_polylines_data、map_polylines_mask 和 map_polylines_center 添加到返回字典 ret_dict 中。
+map_polylines_mask 被转换为布尔值，表示哪些折线是有效的。
+总结来说，这段代码在处理 Waymo 数据集时，检查并处理 HDMap 数据，为中心对象创建地图折线数据，并将这些数据添加到返回字典中。
