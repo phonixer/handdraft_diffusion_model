@@ -58,6 +58,7 @@ bash scripts/dist_test.sh 8 --cfg_file cfgs/waymo/mtr+100_percent_data.yaml --ck
 waymo 数据集的表头
 dict_keys(['track_infos', 'dynamic_map_infos', 'map_infos', 'scenario_id', 'timestamps_seconds', 'current_time_index', 'sdc_track_index', 'objects_of_interest', 'tracks_to_predict'])
 
+
 检查 HDMap 数据：
 
 如果配置中没有设置 WITHOUT_HDMAP 或者其值为 False，则继续处理 HDMap 数据。
@@ -73,3 +74,119 @@ map_polylines_center：中心对象的地图折线中心数据。
 将 map_polylines_data、map_polylines_mask 和 map_polylines_center 添加到返回字典 ret_dict 中。
 map_polylines_mask 被转换为布尔值，表示哪些折线是有效的。
 总结来说，这段代码在处理 Waymo 数据集时，检查并处理 HDMap 数据，为中心对象创建地图折线数据，并将这些数据添加到返回字典中。
+
+
+这个字典 ret_dict 包含了在模型训练过程中使用的各种数据。以下是每一项的解释及其在模型训练中的用途：
+
+scenario_id:
+
+解释: 一个包含场景ID的数组，长度与 track_index_to_predict 相同。
+用途: 用于标识每个轨迹所属的场景。
+obj_trajs:
+
+解释: 对象轨迹数据。
+用途: 用于训练模型预测对象的轨迹。
+obj_trajs_mask:
+
+解释: 对象轨迹的掩码。
+用途: 用于指示哪些轨迹数据是有效的。
+track_index_to_predict:
+
+解释: 需要预测的轨迹索引。
+用途: 用于选择中心特征。
+obj_trajs_pos:
+
+解释: 对象轨迹的位置数据。
+用途: 用于训练模型预测对象的位置。
+obj_trajs_last_pos:
+
+解释: 对象轨迹的最后位置数据。
+用途: 用于提供对象的最后已知位置。
+obj_types:
+
+解释: 对象类型。
+用途: 用于区分不同类型的对象。
+obj_ids:
+
+解释: 对象ID。
+用途: 用于唯一标识每个对象。
+center_objects_world:
+
+解释: 中心对象的世界坐标。
+用途: 用于提供中心对象的位置信息。
+center_objects_id:
+
+解释: 中心对象的ID。
+用途: 用于唯一标识中心对象。
+center_objects_type:
+
+解释: 中心对象的类型。
+用途: 用于区分不同类型的中心对象。
+obj_trajs_future_state:
+
+解释: 对象轨迹的未来状态。
+用途: 用于训练模型预测对象的未来状态。
+obj_trajs_future_mask:
+
+解释: 对象轨迹未来状态的掩码。
+用途: 用于指示哪些未来状态数据是有效的。
+center_gt_trajs:
+
+解释: 中心对象的真实轨迹。
+用途: 用于提供中心对象的真实轨迹数据，作为模型训练的目标。
+center_gt_trajs_mask:
+
+解释: 中心对象真实轨迹的掩码。
+用途: 用于指示哪些真实轨迹数据是有效的。
+center_gt_final_valid_idx:
+
+解释: 中心对象真实轨迹的最后有效索引。
+用途: 用于指示中心对象真实轨迹的最后一个有效点。
+center_gt_trajs_src:
+
+解释: 中心对象的完整轨迹数据。
+用途: 用于提供中心对象的完整轨迹数据，作为模型训练的参考。
+
+
+#### create_map_data_for_center_objects
+这个函数 create_map_data_for_center_objects 的主要目的是为中心对象生成地图数据。以下是该函数的详细解释：
+
+输入参数:
+
+center_objects: 中心对象的坐标和其他信息。
+map_infos: 地图信息，包括所有多段线数据。
+center_offset: 中心偏移量。
+步骤:
+
+定义内部函数 transform_to_center_coordinates:
+
+该函数将多段线坐标转换到中心对象的坐标系中。
+通过减去中心对象的坐标并旋转点来实现。
+生成前一个点的坐标并将其添加到多段线特征中。
+使用掩码将无效的多段线数据置零。
+转换输入数据为张量:
+
+将 map_infos 中的多段线数据和 center_objects 转换为 PyTorch 张量。
+生成批量多段线数据:
+
+使用 generate_batch_polylines_from_map 函数生成批量多段线数据和掩码。
+选择每个中心对象的最近多段线:
+
+如果多段线数量超过阈值 num_of_src_polylines，则选择最近的多段线。
+计算多段线中心和地图中心的距离，选择最近的多段线。
+否则，重复多段线数据以匹配中心对象的数量。
+转换多段线坐标到中心对象坐标系:
+
+使用内部函数 transform_to_center_coordinates 将多段线坐标转换到中心对象的坐标系中。
+计算多段线中心:
+
+计算每个多段线的中心坐标。
+转换结果为 NumPy 数组:
+
+将结果从 PyTorch 张量转换为 NumPy 数组。
+返回值:
+
+map_polylines: 转换后的多段线数据。
+map_polylines_mask: 多段线掩码。
+map_polylines_center: 多段线中心坐标。
+这个函数的主要作用是为每个中心对象生成与其相关的地图多段线数据，并将这些多段线数据转换到中心对象的坐标系中，以便在后续的模型训练或预测过程中使用。
