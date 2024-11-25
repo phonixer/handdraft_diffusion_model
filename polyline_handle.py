@@ -255,16 +255,39 @@ print(map_polylines[:,:,:,6])
 # 统计map_polylines[:,:,:,6]的值，有几种
 print(np.unique(map_polylines[:,:,:,6].numpy()))
 
+
+# 获取唯一值
+unique_values = np.unique(map_polylines[:, :, :, 6].numpy())
+colors = plt.get_cmap('hsv', len(unique_values))
+
+# 创建一个字典，将唯一值映射到颜色
+value_to_color = {value: colors(i) for i, value in enumerate(unique_values)}
+
+# 创建一个字典，将唯一值映射到图例标签
+value_to_label = {value: f'Value {value}' for value in unique_values}
+
 for i in range(1, num_center_objects):
     plt.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
     
-    for j in range( num_of_src_polylines):
+    for j in range(num_of_src_polylines):
         # 排除掉（0，0）
         valid_points = (map_polylines[i, j, :, 0] != 0) | (map_polylines[i, j, :, 1] != 0)
-        plt.plot(map_polylines[i, j, valid_points, 0], map_polylines[i, j, valid_points, 1], 'b', label='Map' if i == 1 and j == 0 else "")
-        # plt.plot(map_polylines[i, j, :, 0], map_polylines[i, j, :, 1], 'b', label='Map' if i == 1 and j == 0 else "")
+        valid_values = map_polylines[i, j, valid_points, -1].numpy()
+        
+        for value in np.unique(valid_values):
+            color = value_to_color[value]  # 获取对应的颜色
+            points = map_polylines[i, j, valid_points, :][map_polylines[i, j, valid_points, -1].numpy() == value]
+            plt.plot(points[:, 0], points[:, 1], color=color)
+
+
+# 添加图例
+for value in unique_values:
+    color = value_to_color[value]
+    plt.plot([], [], color = color, label=f'Value {value}')
 
 plt.legend()
+
+# 保存并显示图像
 plt.savefig('map_polylines.png')
 plt.show()
 
