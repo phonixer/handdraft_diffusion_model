@@ -2,6 +2,7 @@ import pickle
 import numpy as np
 import os
 import sys
+import torch
 from utlits_map import get_interested_agents
 
 import matplotlib.pyplot as plt
@@ -213,8 +214,59 @@ ret_polylines_mask = np.stack(ret_polylines_mask, axis=0)
 print('ret_polylines:', ret_polylines.shape)  #(1298, 20, 7)
 print('ret_polylines_mask:', ret_polylines_mask.shape)  # (1298, 20)
 
-# ret_polylines = torch.from_numpy(ret_polylines)
-# ret_polylines_mask = torch.from_numpy(ret_polylines_mask)
+ret_polylines = torch.from_numpy(ret_polylines)
+ret_polylines_mask = torch.from_numpy(ret_polylines_mask)
+
+batch_polylines = ret_polylines
+batch_polylines_mask = ret_polylines_mask
+
+center_offset= [30.0, 0]
+
+
+center_objects = torch.from_numpy(center_objects)
+num_of_src_polylines = 50
+polyline_center = batch_polylines[:, :, 0:2].sum(dim=1) / torch.clamp_min(batch_polylines_mask.sum(dim=1).float()[:, None], min=1.0)
+center_offset_rot = torch.from_numpy(np.array(center_offset, dtype=np.float32))[None, :].repeat(num_center_objects, 1)
+# center_offset_rot = common_utils.rotate_points_along_z(
+#     points=center_offset_rot.view(num_center_objects, 1, 2),
+#     angle=center_objects[:, 6]
+# ).view(num_center_objects, 2)
+center_offset_rot = center_offset_rot.view(num_center_objects, 2)
+
+# pos_of_map_centers = center_objects[:, 0:2] + center_offset_rot
+pos_of_map_centers = center_objects[:, 0:2]
+
+
+dist = (pos_of_map_centers[:, None, :] - polyline_center[None, :, :]).norm(dim=-1)  # (num_center_objects, num_polylines)
+topk_dist, topk_idxs = dist.topk(k=num_of_src_polylines, dim=-1, largest=False)
+map_polylines = batch_polylines[topk_idxs]  # (num_center_objects, num_topk_polylines, num_points_each_polyline, 7)
+map_polylines_mask = batch_polylines_mask[topk_idxs]  # (num_center_objects, num_topk_polylines, num_points_each_polyline)
+
+
+print('center_offset_rot:', center_offset_rot.shape)
+print('pos_of_map_centers:', pos_of_map_centers.shape)
+print('dist:', dist.shape)
+print('topk_dist:', topk_dist.shape)
+print('topk_idxs:', topk_idxs.shape)
+print('map_polylines:', map_polylines.shape)
+print('map_polylines_mask:', map_polylines_mask.shape)
+print(map_polylines[:,:,:,6])
+
+# 统计map_polylines[:,:,:,6]的值，有几种
+print(np.unique(map_polylines[:,:,:,6].numpy()))
+
+for i in range(1, num_center_objects):
+    plt.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
+    
+    for j in range( num_of_src_polylines):
+        # 排除掉（0，0）
+        valid_points = (map_polylines[i, j, :, 0] != 0) | (map_polylines[i, j, :, 1] != 0)
+        plt.plot(map_polylines[i, j, valid_points, 0], map_polylines[i, j, valid_points, 1], 'b', label='Map' if i == 1 and j == 0 else "")
+        # plt.plot(map_polylines[i, j, :, 0], map_polylines[i, j, :, 1], 'b', label='Map' if i == 1 and j == 0 else "")
+
+plt.legend()
+plt.savefig('map_polylines.png')
+plt.show()
 
 # def generate_batch_polylines_from_map(polylines, point_sampled_interval=1, vector_break_dist_thresh=1.0, num_points_each_polyline=20):
 
