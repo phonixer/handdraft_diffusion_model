@@ -6,6 +6,7 @@ import torch
 from utlits_map import get_interested_agents
 
 import matplotlib.pyplot as plt
+from waymo_types import object_type, lane_type, road_line_type, road_edge_type, signal_state, polyline_type
 
 # 读文件
 
@@ -148,6 +149,23 @@ for i in range(1, num_center_objects):
 
 plt.legend()
 plt.savefig('obj_trajs_past.png')
+
+
+print('info[\'map_infos\']:',info['map_infos'].keys())
+# info['map_infos']: dict_keys(['lane', 
+# 'road_line', 'road_edge', 'stop_sign', 
+# 'crosswalk', 'speed_bump', 'all_polylines'])
+
+print('info[\'map_infos\'][\'lane\']:',len(info['map_infos']['lane']))
+print('info[\'map_infos\'][\'road_line\']:',len(info['map_infos']['road_line']))
+print('info[\'map_infos\'][\'road_edge\']:',len(info['map_infos']['road_edge']))
+print('info[\'map_infos\'][\'stop_sign\']:',len(info['map_infos']['stop_sign']))
+print('info[\'map_infos\'][\'crosswalk\']:',len(info['map_infos']['crosswalk']))
+print('info[\'map_infos\'][\'speed_bump\']:',len(info['map_infos']['speed_bump']))
+print('info[\'map_infos\'][\'all_polylines\']:',len(info['map_infos']['all_polylines']))
+
+
+
 
 
 ## 算map_polylines_data
