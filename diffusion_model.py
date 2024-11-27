@@ -44,9 +44,10 @@ class SinusoidalPosEmb(nn.Module):
         device = x.device
         half_dim = self.dim // 2
         emb = math.log(10000) / (half_dim - 1)
-        emd = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emd = x[:, None] * emd[None, :]
-        emd = torch.cat([torch.sin(emd), torch.cos(emd)], dim=-1)
+        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        emb = x[:, None] * emb[None, :]
+        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+
         return emb
 
 # 我们自己写一个去噪神经网络，使用MLP
