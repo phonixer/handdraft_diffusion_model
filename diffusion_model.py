@@ -15,11 +15,11 @@ class WeightedMSELoss(nn.Module):
         WeightedLoss = (loss * weight).mean()
         return WeightedLoss
     
-class WeightedL1(nn.Module):
+class WeightedL1(WeightedMSELoss):
     def _loss(self, pred, target):
         return torch.abs(pred - target)
     
-class WeightedL2(nn.Module):
+class WeightedL2(WeightedMSELoss):
     def _loss(self, pred, target):
         return F.mse_loss(pred, target, reduction='none')
 
@@ -30,7 +30,7 @@ Losses = {
 
 def extract(a, t, x_shape):
     b, *_ = t.shape
-    out = a.gather(-1,t)
+    out = a.gather(-1, t)
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 class SinusoidalPosEmb(nn.Module):
@@ -116,7 +116,6 @@ class Diffusion(nn.Module):
         self.T = kwargs['T']
         self.clip_denoised = clip_denoised
         self.predict_epsilon = predict_epsilon
-        self.device = torch.device(kwargs['device'])
         self.model = MLP(self.state_dim, self.action_dim, self.hidden_dim, self.device).to(kwargs["device"])
 
         if beta_schedule == 'linear':
@@ -137,38 +136,55 @@ class Diffusion(nn.Module):
 
         # 前向过程
         self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
-        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1.0 - alphas_cumprod))
-        
+        self.register_buffer(
+            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod)
+        )
         # 反向过程
-        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
         self.register_buffer('posterior_variance', posterior_variance)
-        self.register_buffer('posterior_log_variance', torch.log(posterior_variance.clamp(min=1e-20)))
-        
+        self.register_buffer(
+            "posterior_log_variance_clipped",
+            torch.log(posterior_variance.clamp(min=1e-20)),
+        )
 
         # 在指导xT的情况下，如何一步求出x0的结果
-        self.register_buffer('sqrt_recip_alphas_cumprod', torch.sqrt(1.0 / alphas_cumprod))
-        self.register_buffer('sqrt_recipm1_alphas_cumprod', torch.sqrt(1.0 / alphas_cumprod - 1.0))
+        self.register_buffer(
+            "sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod)
+        )
+        self.register_buffer(
+            "sqrt_recipm_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1)
+        )
         # 在指导xT的情况下，如何一步求出x0的结果
 
         # 求均值的两个系数
-        self.register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod))
-        self.register_buffer('posterior_mean_coef2', (1.0 - alphas_cumprod_prev) * torch.sqrt(betas) / (1.0 - alphas_cumprod))
+        self.register_buffer('posterior_mean_coef1', 
+    betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod))
+        self.register_buffer(
+            'posterior_mean_coef2', 
+    (1.0 - alphas_cumprod_prev) * torch.sqrt(betas) / (1.0 - alphas_cumprod))
 
         self.loss_fn = Losses[loss_type]()
 
     def q_posterior(self, x_start, x, t):
+        # print(extract(self.posterior_mean_coef1, t, x.shape))
         posterior_mean = (
             extract(self.posterior_mean_coef1, t, x.shape) * x_start +
             extract(self.posterior_mean_coef2, t, x.shape) * x
         )
         posterior_variance = extract(self.posterior_variance, t, x.shape)
-        posterior_log_variance = extract(self.posterior_log_variance, t, x.shape)
+        posterior_log_variance = extract(
+            self.posterior_log_variance_clipped, t, x.shape)
+        
         return posterior_mean, posterior_variance, posterior_log_variance
 
 
     def predict_start_from_noise(self, x, t, pred_noise):
-        return (extract(self.sqrt_alphas_cumprod, t, x.shape) * x -
-                extract(self.sqrt_one_minus_alphas_cumprod, t, x.shape) * pred_noise)
+        return (
+            extract(self.sqrt_recip_alphas_cumprod, t, x.shape) * x
+            - extract(self.sqrt_recipm_alphas_cumprod, t, x.shape) * pred_noise
+        )
 
     
     def p_mean_variance(self, x, t, state):
@@ -181,7 +197,7 @@ class Diffusion(nn.Module):
         # 在有些代码中，为了稳定，会对pred_noise进行clip
         if self.clip_denoised:
             pred_noise = torch.clamp(pred_noise, -1.0, 1.0)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_recon, t, state)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_recon, x, t)
         return model_mean, posterior_log_variance
 
     def p_sample(self, x, t, state):
@@ -254,7 +270,7 @@ class Diffusion(nn.Module):
 
 
 
-    def loss(self, x, t, state, weights = 1.0):
+    def loss(self, x, state, weights = 1.0):
         batch_size = len(x)
         t = torch.randint(0, self.T, (batch_size,), device=self.device).long()
         return self.p_losses(x, state, t, weights)

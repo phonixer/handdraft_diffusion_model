@@ -166,6 +166,7 @@ class Diffusion(nn.Module):
         self.loss_fn = Losses[loss_type]()
 
     def q_posterior(self, x_start, x, t):
+        # print(extract(self.posterior_mean_coef1, t, x.shape))
         posterior_mean = (
             extract(self.posterior_mean_coef1, t, x.shape) * x_start
             + extract(self.posterior_mean_coef2, t, x.shape) * x
