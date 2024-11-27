@@ -267,6 +267,3 @@ if __name__ == "__main__":
     loss = model.loss(x, state)
     
     print(f"action: {result};loss: {loss.item()}")
-
-
-    

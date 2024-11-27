@@ -88,9 +88,9 @@ class MLP(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x, time, state):
-        print('forward', x.shape, time.shape, state.shape)
+        # print('forward', x.shape, time.shape, state.shape)
         # 输出类型
-        print(type(x), type(time), type(state))
+        # print(type(x), type(time), type(state))
         
         t_emb = self.time_mlp(time)
         x = torch.cat([x, state, t_emb], dim=1)
@@ -189,7 +189,7 @@ class Diffusion(nn.Module):
     
     def p_mean_variance(self, x, t, state):
 
-        print(x.shape, t.shape, state.shape)
+        # print(x.shape, t.shape, state.shape)
 
 
         pred_noise = self.model(x, t, state) # 这个是预测的噪声
@@ -221,10 +221,13 @@ class Diffusion(nn.Module):
         # 接着我们生成最原始的噪声
         x = torch.randn(shape, device=device, requires_grad=False)
         # 这边DQL需要用到这个梯度，写成TRUE，这里是DDPM标准实现方法
+        self.diffusion_steps = []  # 用于保存每一步的结果
 
         for i in reversed(range(0, self.T)):
             t = torch.full((batch_size, ),i , device=device, dtype=torch.long)
             x = self.p_sample(x,t,state)
+            self.diffusion_steps.append(x.clone())  # 保存每一步的结果
+
         return x
 
 
@@ -237,7 +240,7 @@ class Diffusion(nn.Module):
         # 在ddpm中，我们需要初始化一个噪声，
         # 那么这个噪声的形状是多大呢，就是这个state的形状，在这里使用shape来表示
         action = self.p_sample_loop(state, shape, *args, **kwargs)
-        return action.clamp_(-1.0, 1.0)  # 限制在-1.0到1.0之间
+        return action.clamp_(-1.0, 1.0), self.diffusion_steps  # 限制在-1.0到1.0之间
     
 
     # --------------------------training----------------------------#
@@ -283,16 +286,82 @@ class Diffusion(nn.Module):
 
 
 
-
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # device = "cpu"  # cuda
+    batchsize = 256
+    act_dim = 5
+    # x = torch.randn(256, 2).to(device)  # Batch, action_dim
+    # state = torch.randn(256, 11).to(device)  # Batch, state_dim
 
-    x = torch.randn(256, 2).to(device)  #batch_size = 256
-    state = torch.randn(256, 11).to(device)
-    model = Diffusion(loss_type='l2', obs_dim=11, act_dim=2, hidden_dim=256, device=device, T=1000)
+    # 生成 x 张量，并转换为浮点类型
+    x = torch.arange(1, batchsize + 1, dtype=torch.float32).unsqueeze(1).repeat(1, act_dim).to(device)
+    # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
+    state = torch.arange(1, batchsize + 1, dtype=torch.float32).unsqueeze(1).repeat(1, 11).to(device)
+    x = x / x.max()
+    state = state / state.max() 
+
+
+    model = Diffusion(loss_type='l2', obs_dim=11, act_dim=act_dim, hidden_dim=256, device=device, T=10)
     result = model(state)  # Sample result
     
     loss = model.loss(x, state)
     
-    print(f"action: {result};loss: {loss.item()}")
+    # print(f"action: {result};loss: {loss.item()}")
+    import matplotlib.pyplot as plt
+    import torch.optim as optim
+
+
+
+    optimizer = optim.Adam(model.parameters(), lr=0.0002)
+    # 训练模型
+    model.train()
+    for i in range(10000):
+        loss = model.loss(x, state)
+        loss.backward()
+        print(f"loss: {loss.item()}")
+        optimizer.step()
+        optimizer.zero_grad()
+
+
+
+    # 训练结束后绘制扩散过程的图像
+    state_test = state[100:101,:]
+    x_test = x[100:101,:]
+    print(state_test)
+    print(state.shape)
+    print(state_test.shape)
+    print(x_test)
+    print(x_test.shape)
+
+    action, diffusion_steps = model.sample(state_test)
+
+    # 算下loss
+    loss = model.loss(x_test, state_test)
+    print(f"action: {action};loss: {loss.item()}")
+    # 输出真值
+    print(x_test)
+    print(len(diffusion_steps))
+
+
+    # 绘制扩散过程的图像
+    num_steps = len(diffusion_steps)
+    steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+    x_test = x_test.cpu().detach().numpy().flatten()
+    plt.figure(figsize=(15, 5))
+    for step_idx in steps_to_plot:
+        step = diffusion_steps[step_idx].cpu().detach().numpy().flatten()
+        print(step)
+        plt.scatter([step_idx] * len(step), step, label=f'Step {step_idx}')
+
+    plt.scatter([steps_to_plot[-1]] * len(x_test), x_test, label='Ground Truth')
+    print(action)
+    print(action.shape)
+
+    plt.title('Diffusion Process')
+    plt.xlabel('Index')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('diffusion.png')
+    plt.show()
