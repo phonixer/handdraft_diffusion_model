@@ -268,6 +268,10 @@ print('topk_dist:', topk_dist.shape)
 print('topk_idxs:', topk_idxs.shape)
 print('map_polylines:', map_polylines.shape)
 print('map_polylines_mask:', map_polylines_mask.shape)
+#终止程序
+# sys.exit(0)
+
+
 print(map_polylines[:,:,:,6])
 
 # 统计map_polylines[:,:,:,6]的值，有几种
@@ -322,7 +326,7 @@ from diffusion_model import Diffusion
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
-batchsize = 100
+batchsize = 200
 act_dim = 160
 obs_dim = 22
 T = 10
@@ -331,9 +335,9 @@ epoch = 10000
 # state = torch.randn(256, 11).to(device)  # Batch, state_dim
 
 # 生成 x 张量，并转换为浮点类型
-x = torch.tensor(obj_trajs_future[4:5,:,:2]).to(device)
+x = torch.tensor(obj_trajs_future[track_index_to_predict,:,:2]).to(device)
 # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
-state = torch.tensor(obj_trajs_past[4:5,:,:2]).to(device)
+state = torch.tensor(obj_trajs_past[track_index_to_predict,:,:2]).to(device)
 
 # 将均值变成0 然后归一化
 # x 的每个点都减去第一个点
@@ -343,9 +347,9 @@ state = (state - state[:, 0:1, :]) / 50
 
 
 
-# 复制 x 和 state，使其形状为 (100, 10, 2)
-x = x.repeat(batchsize, 1, 1)
-state = state.repeat(batchsize, 1, 1)
+# # 复制 x 和 state，使其形状为 (100, 10, 2)
+x = x.repeat(25, 1, 1)
+state = state.repeat(25, 1, 1)
 
 # Reshape x and state to (100,)
 x = x.view(batchsize, -1)
@@ -371,7 +375,7 @@ import torch.optim as optim
 
 
 
-optimizer = optim.Adam(model.parameters(), lr=0.0002)
+optimizer = optim.Adam(model.parameters(), lr=0.0003)
 # 训练模型
 model.train()
 for i in range(epoch):

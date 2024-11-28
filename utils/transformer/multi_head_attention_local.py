@@ -18,7 +18,7 @@ from torch.nn.parameter import Parameter
 from torch.nn import functional as F
 import torch.nn as nn
 
-from mtr.ops import attention
+from ops import attention
 
 
 class MultiheadAttentionLocal(nn.Module):

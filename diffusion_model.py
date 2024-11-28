@@ -75,7 +75,7 @@ class MLP(nn.Module):
         )
 
         self.mid_layer = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
             nn.Linear(hidden_dim, 4*hidden_dim),
             nn.Mish(),
@@ -84,7 +84,7 @@ class MLP(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
         )
-        self.final_layer = nn.Linear(hidden_dim, action_dim)
+        self.final_layer = nn.Linear(2 * hidden_dim, action_dim)
 
         self.init_weights()
     
@@ -98,12 +98,11 @@ class MLP(nn.Module):
         # print('forward', x.shape, time.shape, state.shape)
         # 输出类型
         # print(type(x), type(time), type(state))
-        
         t_emb = self.time_mlp(time)
         x = torch.cat([x, state, t_emb], dim=1)
-        # x = self.input_layer(x)
-        x = self.mid_layer(x)
-        # x = x + x1
+        x1 = self.input_layer(x)
+        x = self.mid_layer(x1)
+        x = torch.cat([x, x1], dim=1)
         x = self.final_layer(x)
         return x
     
