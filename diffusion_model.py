@@ -69,10 +69,17 @@ class MLP(nn.Module):
         )
 
         input_dim = state_dim + action_dim + t_dim
+        self.input_layer = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+                        nn.Mish(),
+        )
+
         self.mid_layer = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.Mish(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, 4*hidden_dim),
+            nn.Mish(),
+            nn.Linear(4*hidden_dim, hidden_dim),
             nn.Mish(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
@@ -94,7 +101,9 @@ class MLP(nn.Module):
         
         t_emb = self.time_mlp(time)
         x = torch.cat([x, state, t_emb], dim=1)
+        # x = self.input_layer(x)
         x = self.mid_layer(x)
+        # x = x + x1
         x = self.final_layer(x)
         return x
     
@@ -240,7 +249,9 @@ class Diffusion(nn.Module):
         # 在ddpm中，我们需要初始化一个噪声，
         # 那么这个噪声的形状是多大呢，就是这个state的形状，在这里使用shape来表示
         action = self.p_sample_loop(state, shape, *args, **kwargs)
-        return action.clamp_(-1.0, 1.0), self.diffusion_steps  # 限制在-1.0到1.0之间
+        # return action.clamp_(-1.0, 1.0), self.diffusion_steps  # 限制在-1.0到1.0之间
+        return action, self.diffusion_steps  # 限制在-1.0到1.0之间
+    
     
 
     # --------------------------training----------------------------#

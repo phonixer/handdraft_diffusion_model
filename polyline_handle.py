@@ -309,29 +309,146 @@ plt.legend()
 plt.savefig('map_polylines.png')
 plt.show()
 
-# def generate_batch_polylines_from_map(polylines, point_sampled_interval=1, vector_break_dist_thresh=1.0, num_points_each_polyline=20):
 
-#     ret_polylines = torch.from_numpy(ret_polylines)
-#     ret_polylines_mask = torch.from_numpy(ret_polylines_mask)
 
-#     return ret_polylines, ret_polylines_mask
 
-# batch_polylines, batch_polylines_mask = self.generate_batch_polylines_from_map(
-#     polylines=polylines.numpy(), point_sampled_interval=self.dataset_cfg.get('POINT_SAMPLED_INTERVAL', 1),
-#     vector_break_dist_thresh=self.dataset_cfg.get('VECTOR_BREAK_DIST_THRESH', 1.0),
-#     num_points_each_polyline=self.dataset_cfg.get('NUM_POINTS_EACH_POLYLINE', 20),
-# )  # (num_polylines, num_points_each_polyline, 7), (num_polylines, num_points_each_polyline)
+# obj_trajs_past
+# obj_trajs_future
+# # 输出形状
+print(obj_trajs_past.shape)  # (100, 11, 10)
+print(obj_trajs_future.shape)  # (100, 80, 10)
 
-# polyline_center = batch_polylines[:, :, 0:2].sum(dim=1) / torch.clamp_min(batch_polylines_mask.sum(dim=1).float()[:, None], min=1.0)
-# center_offset_rot = torch.from_numpy(np.array(center_offset, dtype=np.float32))[None, :].repeat(num_center_objects, 1)
-# center_offset_rot = common_utils.rotate_points_along_z(
-#     points=center_offset_rot.view(num_center_objects, 1, 2),
-#     angle=center_objects[:, 6]
-# ).view(num_center_objects, 2)
+from diffusion_model import Diffusion
 
-# pos_of_map_centers = center_objects[:, 0:2] + center_offset_rot
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = "cpu"  # cuda
+batchsize = 100
+act_dim = 160
+obs_dim = 22
+T = 10
+epoch = 10000
+# x = torch.randn(256, 2).to(device)  # Batch, action_dim
+# state = torch.randn(256, 11).to(device)  # Batch, state_dim
 
-# dist = (pos_of_map_centers[:, None, :] - polyline_center[None, :, :]).norm(dim=-1)  # (num_center_objects, num_polylines)
-# topk_dist, topk_idxs = dist.topk(k=num_of_src_polylines, dim=-1, largest=False)
-# map_polylines = batch_polylines[topk_idxs]  # (num_center_objects, num_topk_polylines, num_points_each_polyline, 7)
-# map_polylines_mask = batch_polylines_mask[topk_idxs]  # (num_center_objects, num_topk_polylines, num_points_each_polyline)
+# 生成 x 张量，并转换为浮点类型
+x = torch.tensor(obj_trajs_future[4:5,:,:2]).to(device)
+# 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
+state = torch.tensor(obj_trajs_past[4:5,:,:2]).to(device)
+
+# 将均值变成0 然后归一化
+# x 的每个点都减去第一个点
+x = (x - x[:, 0:1, :]) / 50
+state = (state - state[:, 0:1, :]) / 50
+
+
+
+
+# 复制 x 和 state，使其形状为 (100, 10, 2)
+x = x.repeat(batchsize, 1, 1)
+state = state.repeat(batchsize, 1, 1)
+
+# Reshape x and state to (100,)
+x = x.view(batchsize, -1)
+state = state.view(batchsize, -1)
+print(x.shape)
+print(state.shape)
+
+
+
+
+
+
+
+
+model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim=2048, device=device, T=T)
+result = model(state)  # Sample result
+
+loss = model.loss(x, state)
+
+# print(f"action: {result};loss: {loss.item()}")
+import matplotlib.pyplot as plt
+import torch.optim as optim
+
+
+
+optimizer = optim.Adam(model.parameters(), lr=0.0002)
+# 训练模型
+model.train()
+for i in range(epoch):
+    loss = model.loss(x, state)
+    loss.backward()
+    print(f"loss: {loss.item()}")
+    optimizer.step()
+    optimizer.zero_grad()
+
+
+
+# 训练结束后绘制扩散过程的图像
+state_test = state[4:5,:]
+x_test = x[4:5,:]
+print(state_test)
+print(state.shape)
+print(state_test.shape)
+print(x_test)
+print(x_test.shape)
+
+action, diffusion_steps = model.sample(state_test)
+
+# 算下loss
+loss = model.loss(x_test, state_test)
+print(f"action: {action};loss: {loss.item()}")
+# 输出真值
+print(x_test)
+print(len(diffusion_steps))
+
+# 恢复形状
+x_test = x_test.view(-1, 2)
+print(x_test.shape)
+action = action.view(-1, 2)
+print(action.shape)
+state_test = state_test.view(-1, 2)
+
+# 绘制扩散过程的图像
+num_steps = len(diffusion_steps)
+steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+x_test = x_test.cpu().detach().numpy()
+action = action.cpu().detach().numpy()
+state_test = state_test.cpu().detach().numpy()
+
+plt.figure(figsize=(15, 5))
+for step_idx in steps_to_plot:
+    step = diffusion_steps[step_idx].cpu().detach().numpy().reshape(80, 2)
+    # print(step)
+    plt.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
+
+plt.scatter(x_test[:, 0], x_test[:, 1], label='Ground Truth', color='g')
+plt.scatter(action[:, 0], action[:, 1], label='Predicted', color='r')
+plt.scatter(state_test[:, 0], state_test[:, 1], label='Start', color='b')
+
+# print(action)
+print(action.shape)
+
+plt.title('Diffusion Process')
+plt.xlabel('X')
+plt.ylabel('Y')
+plt.legend()
+plt.tight_layout()
+plt.savefig('diffusion.png')
+plt.show()
+
+
+# 只画预测的
+plt.figure(figsize=(15, 5))
+
+
+plt.scatter(x_test[:, 0], x_test[:, 1], label='Ground Truth', color='g')
+plt.scatter(action[:, 0], action[:, 1], label='Predicted', color='r')
+plt.scatter(state_test[:, 0], state_test[:, 1], label='Start', color='b')
+
+plt.title('Diffusion Process')
+plt.xlabel('X')
+plt.ylabel('Y')
+plt.legend()
+plt.tight_layout()
+plt.savefig('diffusion_predict.png')
+plt.show()
