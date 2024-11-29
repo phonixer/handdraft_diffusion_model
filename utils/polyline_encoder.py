@@ -1,13 +1,7 @@
-# Motion Transformer (MTR): https://arxiv.org/abs/2209.13508
-# Published at NeurIPS 2022
-# Written by Shaoshuai Shi 
-# All Rights Reserved
-
-
 import torch
 import torch.nn as nn
-from utils import common_layers
-
+# from utils import common_layers
+import common_layers
 
 class PointNetPolylineEncoder(nn.Module):
     def __init__(self, in_channels, hidden_dim, num_layers=3, num_pre_layers=1, out_channels=None):
@@ -32,13 +26,6 @@ class PointNetPolylineEncoder(nn.Module):
             self.out_mlps = None 
 
     def forward(self, polylines, polylines_mask):
-        """
-        Args:
-            polylines (batch_size, num_polylines, num_points_each_polylines, C):
-            polylines_mask (batch_size, num_polylines, num_points_each_polylines):
-
-        Returns:
-        """
         batch_size, num_polylines,  num_points_each_polylines, C = polylines.shape
 
         # pre-mlp
@@ -65,3 +52,121 @@ class PointNetPolylineEncoder(nn.Module):
             feature_buffers = feature_buffers.new_zeros(batch_size, num_polylines, feature_buffers_valid.shape[-1])
             feature_buffers[valid_mask] = feature_buffers_valid
         return feature_buffers
+
+class MLPWithPolylineEncoder(nn.Module):
+    def __init__(self, in_channels, hidden_dim, num_layers, num_pre_layers, out_channels, mlp_hidden_dim, mlp_out_dim):
+        super().__init__()
+        self.encoder = PointNetPolylineEncoder(in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
+        self.mlp = nn.Sequential(
+            nn.Linear(out_channels, mlp_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_hidden_dim, mlp_out_dim)
+        )
+
+    def forward(self, polylines, polylines_mask):
+        encoded_features = self.encoder(polylines, polylines_mask)
+        output = self.mlp(encoded_features)
+        return output
+
+    def compute_loss(self, output, target, mask):
+        loss_fn = nn.MSELoss(reduction='none')
+        loss = loss_fn(output, target)
+        mask = mask.unsqueeze(-1).expand_as(loss)  # Ensure mask has the same shape as loss
+        loss = loss * mask
+        return loss.mean()
+
+if __name__ == "__main__":
+
+    batch_size = 100
+    num_polylines = 8
+    num_points_each_polylines = 20
+    in_channels = 2
+    hidden_dim = 64
+    num_layers = 3
+    num_pre_layers = 1
+    out_channels = 128
+    mlp_hidden_dim = 256
+    mlp_out_dim = 40 # 20 * 2
+    model = MLPWithPolylineEncoder(in_channels, hidden_dim, num_layers, num_pre_layers, out_channels, mlp_hidden_dim, mlp_out_dim)
+
+    # Create polylines with y-coordinates as horizontal lines
+    polylines = torch.zeros(batch_size, num_polylines, num_points_each_polylines, in_channels)
+    for i in range(num_polylines):
+        polylines[0, i, :, 0] = torch.linspace(0, 10, num_points_each_polylines)  # x-coordinates
+        polylines[0, i, :, 1] = i  # y-coordinates
+
+    # Create a mask to remove a specific line (e.g., the 4th line)
+    polylines_mask = torch.ones(batch_size, num_polylines, num_points_each_polylines).bool()
+    polylines_mask[0, 3, :] = False  # Remove the 4th line
+
+    x = torch.randn(batch_size, num_polylines, 40)  # Example input for MLP
+    target = polylines.reshape(batch_size, num_polylines, -1)  # Example target for loss calculation
+    print("target Shape:", target.shape)
+
+    output = model(polylines, polylines_mask)
+    loss = model.compute_loss(output, target, polylines_mask.sum(dim=-1) > 0)
+    print(model)
+
+    print("Output Shape:", output.shape)
+    print("Loss:", loss.item())
+    exit()
+
+
+        # Apply the mask to remove the specific line
+    masked_polylines = polylines.clone()
+    masked_polylines[~polylines_mask] = float('nan')  # Set masked points to NaN for plotting
+
+
+    import matplotlib.pyplot as plt
+    # Plot the polylines before applying the mask
+    plt.figure(figsize=(10, 5))
+    for i in range(num_polylines):
+        plt.plot(polylines[0, i, :, 0], polylines[0, i, :, 1], label=f'Polyline {i+1}')
+    plt.title('Polylines Before Applying Mask')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.legend()
+    plt.savefig('before.png')
+    # Plot the polylines after applying the mask
+    plt.figure(figsize=(10, 5))
+    for i in range(num_polylines):
+        plt.plot(masked_polylines[0, i, :, 0], masked_polylines[0, i, :, 1], label=f'Polyline {i+1}')
+    plt.title('Polylines After Applying Mask')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.legend()
+    plt.savefig('after.png')
+
+
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    num_epochs = 1000
+    for epoch in range(num_epochs):
+        model.train()
+        optimizer.zero_grad()
+        output = model(polylines, polylines_mask)
+        loss = model.compute_loss(output, target, polylines_mask.sum(dim=-1) > 0)
+        loss.backward()
+        optimizer.step()
+
+        print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}')
+
+    # Plot the model output vs target for each polyline
+    print("Output Shape:", output.shape)
+
+    target = target.reshape(batch_size, num_polylines, num_points_each_polylines, in_channels)
+    output = output.reshape(batch_size, num_polylines, num_points_each_polylines, in_channels)
+    # 考虑mask
+    target[~polylines_mask] = float('nan')
+    output[~polylines_mask] = float('nan')
+    plt.figure(figsize=(10, 5))
+    for i in range(num_polylines):
+        plt.plot(target[0, i, :, 0].detach().numpy(), target[0, i, :, 1].detach().numpy(), label=f'Polyline {i+1} Target')
+        plt.plot(output[0, i, :, 0].detach().numpy(), output[0, i, :, 1].detach().numpy() + 0.1, label=f'Polyline {i+1} Output')
+    plt.title(f'Epoch {epoch+1} - Model Output vs Target')
+    plt.xlabel('Point Index')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.savefig(f'output_vs_target_epoch_{epoch+1}.png')
+    plt.close()

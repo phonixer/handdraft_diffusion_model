@@ -52,119 +52,42 @@ class SinusoidalPosEmb(nn.Module):
         return emb
 
 # 我们自己写一个去噪神经网络，使用MLP
-class MLP(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim, device, t_dim = 16):
-        super(MLP, self).__init__()
-
-        self.t_dim = t_dim
-        self.a_dim = action_dim
-        self.device = device
-
-        # 第一个神经网络对时间的编码
-        self.time_mlp = nn.Sequential(
-            # 对时间维度进行一个位置编码 
-            SinusoidalPosEmb(t_dim),
-            nn.Linear(t_dim, t_dim*2),
-            nn.Mish(),# 在diffusion 中一般使用Mish激活函数
-            nn.Linear(t_dim*2, t_dim)
-        )
-
-        input_dim = state_dim + action_dim + t_dim
-        self.input_layer = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-                        nn.Mish(),
-        )
-
-        self.mid_layer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Mish(),
-            nn.Linear(hidden_dim, 4*hidden_dim),
-            nn.Mish(),
-            nn.Linear(4*hidden_dim, hidden_dim),
-            nn.Mish(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Mish(),
-        )
-        self.final_layer = nn.Linear(2 * hidden_dim, action_dim)
-
-        self.init_weights()
-    
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight)
-                nn.init.zeros_(m.bias)
-
-    def forward(self, x, time, state):
-        # print('forward', x.shape, time.shape, state.shape)
-        # 输出类型
-        # print(type(x), type(time), type(state))
-        t_emb = self.time_mlp(time)
-        x = torch.cat([x, state, t_emb], dim=1)
-        x1 = self.input_layer(x)
-        x = self.mid_layer(x1)
-        x = torch.cat([x, x1], dim=1)
-        x = self.final_layer(x)
-        return x
-    
-
-
-
-
-
-    
-
-
-# 我们自己写一个去噪神经网络，使用MLP
 class MLPMap(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim, device, t_dim = 16):
+    def __init__(self, state_dim, action_dim, hidden_dim, device, t_dim=16):
         super(MLPMap, self).__init__()
 
         self.t_dim = t_dim
         self.a_dim = action_dim
         self.device = device
-        #         # 示例输入数据
-        # batch_size = 2
-        # num_polylines = 3
-        # num_points_each_polylines = 4
-        in_channels = state_dim.shape[-1]
-
-        # # 随机生成一些多段线数据和掩码
-        # polylines = torch.randn(batch_size, num_polylines, num_points_each_polylines, in_channels)
-        # polylines_mask = torch.randint(0, 2, (batch_size, num_polylines, num_points_each_polylines)).bool()
-
-        # 创建 PointNetPolylineEncoder 实例
+        in_channels = 2
+        print(in_channels)
         hidden_dim = 64
         num_layers = 3
         num_pre_layers = 1
-        out_channels = 128
+        out_channels = 40
         self.agent_polyline_encoder = self.build_polyline_encoder(
             in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
 
 
-        # 第一个神经网络对时间的编码
         self.time_mlp = nn.Sequential(
-            # 对时间维度进行一个位置编码 
             SinusoidalPosEmb(t_dim),
-            nn.Linear(t_dim, t_dim*2),
-            nn.Mish(),# 在diffusion 中一般使用Mish激活函数
-            nn.Linear(t_dim*2, t_dim)
+            nn.Linear(t_dim, t_dim * 2),
+            nn.Mish(),
+            nn.Linear(t_dim * 2, t_dim)
         )
-
-
 
         input_dim = out_channels + action_dim + t_dim
         self.input_layer = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-                        nn.Mish(),
+            nn.Mish(),
         )
 
         self.mid_layer = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
-            nn.Linear(hidden_dim, 4*hidden_dim),
+            nn.Linear(hidden_dim, 4 * hidden_dim),
             nn.Mish(),
-            nn.Linear(4*hidden_dim, hidden_dim),
+            nn.Linear(4 * hidden_dim, hidden_dim),
             nn.Mish(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
@@ -172,26 +95,25 @@ class MLPMap(nn.Module):
         self.final_layer = nn.Linear(2 * hidden_dim, action_dim)
 
         self.init_weights()
-    
+
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight)
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x, time, state,**kwargs):
-        # print('forward', x.shape, time.shape, state.shape)
-        # 输出类型
-        # print(type(x), type(time), type(state))
+    def forward(self, x, time, polylines, polylines_mask, **kwargs):
         t_emb = self.time_mlp(time)
-        state = self.agent_polyline_encoder(state, kwargs['polylines_mask'])
+        state = self.agent_polyline_encoder(polylines, polylines_mask)
+        print(state.shape)
+        exit()
         x = torch.cat([x, state, t_emb], dim=1)
         x1 = self.input_layer(x)
         x = self.mid_layer(x1)
         x = torch.cat([x, x1], dim=1)
         x = self.final_layer(x)
         return x
-    
+
     def build_polyline_encoder(self, in_channels, hidden_dim, num_layers, num_pre_layers=1, out_channels=None):
         ret_polyline_encoder = polyline_encoder.PointNetPolylineEncoder(
             in_channels=in_channels,
@@ -220,7 +142,7 @@ class Diffusion(nn.Module):
         self.T = kwargs['T']
         self.clip_denoised = clip_denoised
         self.predict_epsilon = predict_epsilon
-        self.model = MLP(self.state_dim, self.action_dim, self.hidden_dim, self.device).to(kwargs["device"])
+        self.model = MLPMap(self.state_dim, self.action_dim, self.hidden_dim, self.device).to(kwargs["device"])
 
         if beta_schedule == 'linear':
             betas = torch.linspace(0.0001, 0.02,self.T, dtype=torch.float32, device=self.device)
@@ -395,23 +317,31 @@ class Diffusion(nn.Module):
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # device = "cpu"  # cuda
-    batchsize = 256
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     act_dim = 5
-    # x = torch.randn(256, 2).to(device)  # Batch, action_dim
-    # state = torch.randn(256, 11).to(device)  # Batch, state_dim
+    obs_dim = 11
+        # 示例输入数据
+    batch_size = 100
+    num_polylines = 8
+    num_points_each_polylines = 20
+    in_channels = 2
 
-    # 生成 x 张量，并转换为浮点类型
-    x = torch.arange(1, batchsize + 1, dtype=torch.float32).unsqueeze(1).repeat(1, act_dim).to(device)
-    # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
-    state = torch.arange(1, batchsize + 1, dtype=torch.float32).unsqueeze(1).repeat(1, 11).to(device)
-    x = x / x.max()
-    state = state / state.max() 
+    # 随机生成一些多段线数据和掩码
+    polylines = torch.randn(batch_size, num_polylines, num_points_each_polylines, in_channels).to(device)
+    polylines_mask = torch.randint(0, 2, (batch_size, num_polylines, num_points_each_polylines)).bool().to(device)
 
+    # 生成 x 和 state 张量
+    x = torch.randn(batch_size, act_dim).to(device)
+    state = torch.randn(batch_size, obs_dim).to(device)
 
-    model = Diffusion(loss_type='l2', obs_dim=11, act_dim=act_dim, hidden_dim=256, device=device, T=10)
-    result = model(state)  # Sample result
+    model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim=256, device=device, T=10)
+    result, diffusion_steps = model(state, polylines_mask=polylines_mask, polylines=polylines)  # Sample result
     
-    loss = model.loss(x, state)
+    loss = model.loss(x, state, polylines_mask=polylines_mask, polylines=polylines)
+    
+    print(f"action: {result}; loss: {loss.item()}")
+
     
     # print(f"action: {result};loss: {loss.item()}")
     import matplotlib.pyplot as plt

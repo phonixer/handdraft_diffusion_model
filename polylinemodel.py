@@ -174,6 +174,7 @@ if __name__ == '__main__':
             #    polylines (batch_size, num_polylines, num_points_each_polylines, C):
             # polylines_mask (batch_size, num_polylines, num_points_each_polylines):
 
+
     # Initialize the PolyLineEncoder with the configuration
     
     polyline_encoder = PolyLineEncoder(config).to(device)

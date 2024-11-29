@@ -4,7 +4,7 @@ import os
 import sys
 import torch
 from utlits_map import get_interested_agents
-
+from utils import polyline_encoder
 import matplotlib.pyplot as plt
 from waymo_types import object_type, lane_type, road_line_type, road_edge_type, signal_state, polyline_type
 
@@ -322,7 +322,7 @@ plt.show()
 print(obj_trajs_past.shape)  # (100, 11, 10)
 print(obj_trajs_future.shape)  # (100, 80, 10)
 
-from diffusion_model import Diffusion
+from diffusion_model_map import Diffusion
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
@@ -333,15 +333,21 @@ T = 10
 epoch = 1000
 # x = torch.randn(256, 2).to(device)  # Batch, action_dim
 # state = torch.randn(256, 11).to(device)  # Batch, state_dim
+mask = abs(map_polylines[:,:,:,:2])<1
+
+map_polylines[:,:,:,:2][mask] = map_polylines[map_polylines_mask].mean()  # Batch, state_dim
+print(map_polylines.shape)
 
 # 生成 x 张量，并转换为浮点类型
-x = torch.tensor(map_polylines[:,:,:,:2]).to(device)
+x = torch.tensor(map_polylines[:,:,:,:2] ).to(device)
 # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
 state = torch.tensor(map_polylines[:,:,:,:2]).to(device)
 
 
 
-
+# 归一化 变到 -1, 1
+x = (x - x.min()) / (x.max() - x.min()) * 2 - 1
+state = (state - state.min()) / (state.max() - state.min()) * 2 - 1
 
 
 
@@ -387,8 +393,8 @@ for i in range(epoch):
 
 
 # 训练结束后绘制扩散过程的图像
-state_test = state[4:5,:,:,:]
-x_test = x[4:5,:,:,:]
+state_test = state[4:5,:]
+x_test = x[4:5,:]
 print(state_test)
 print(state.shape)
 print(state_test.shape)
@@ -405,11 +411,11 @@ print(x_test)
 print(len(diffusion_steps))
 
 # 恢复形状
-x_test = x_test.view(-1, 50* 20, 2)
+x_test = x_test.view(-1, 2)
 print(x_test.shape)
-action = action.view(-1, 50* 20, 2)
+action = action.view(-1, 2)
 print(action.shape)
-state_test = state_test.view(-1, 50* 20, 2)
+state_test = state_test.view(-1, 2)
 
 # 绘制扩散过程的图像
 num_steps = len(diffusion_steps)
@@ -420,7 +426,7 @@ state_test = state_test.cpu().detach().numpy()
 
 plt.figure(figsize=(15, 5))
 for step_idx in steps_to_plot:
-    step = diffusion_steps[step_idx].cpu().detach().numpy().reshape(50*20, 2)
+    step = diffusion_steps[step_idx].cpu().detach().numpy().reshape(-1, 2)
     # print(step)
     plt.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
 
@@ -443,15 +449,45 @@ plt.show()
 # 只画预测的
 plt.figure(figsize=(15, 5))
 
+# 假设 x_test, action, state_test 已经定义并具有相同的形状 (batch_size, num_points, 2)
+import matplotlib.pyplot as plt
+import torch
 
+# 假设 x_test, action, state_test 已经定义并具有相同的形状 (num_points, 2)
+
+# 排除掉 (0, 0) 点
+valid_points_x_test = (x_test[:, 0] != 0) | (x_test[:, 1] != 0)
+valid_points_action = (action[:, 0] != 0) | (action[:, 1] != 0)
+valid_points_state_test = (state_test[:, 0] != 0) | (state_test[:, 1] != 0)
+
+# 过滤掉无效点
+x_test_filtered = x_test[valid_points_x_test]
+action_filtered = action[valid_points_action]
+state_test_filtered = state_test[valid_points_state_test]
+
+
+# 绘制数据点
+plt.figure(figsize=(10, 5))
+plt.scatter(x_test_filtered[:, 0], x_test_filtered[:, 1], label='Ground Truth', color='g')
+plt.scatter(action_filtered[:, 0], action_filtered[:, 1], label='Predicted', color='r')
+plt.scatter(state_test_filtered[:, 0], state_test_filtered[:, 1], label='Start', color='b')
+
+# 添加图例和标题
+plt.legend()
+plt.title('Scatter Plot of Data Points')
+plt.xlabel('X')
+plt.ylabel('Y')
+
+# 显示图像
+plt.show()
+
+# 只画ground truth
+plt.figure(figsize=(15, 5))
 plt.scatter(x_test[:, 0], x_test[:, 1], label='Ground Truth', color='g')
-plt.scatter(action[:, 0], action[:, 1], label='Predicted', color='r')
-plt.scatter(state_test[:, 0], state_test[:, 1], label='Start', color='b')
-
-plt.title('Diffusion Process')
+plt.title('Ground Truth')
 plt.xlabel('X')
 plt.ylabel('Y')
 plt.legend()
 plt.tight_layout()
-plt.savefig('diffusion_predict.png')
+plt.savefig('ground_truth.png')
 plt.show()
