@@ -57,15 +57,27 @@ class MLPWithPolylineEncoder(nn.Module):
     def __init__(self, in_channels, hidden_dim, num_layers, num_pre_layers, out_channels, mlp_hidden_dim, mlp_out_dim):
         super().__init__()
         self.encoder = PointNetPolylineEncoder(in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
+
+        mlp_in_dim = 8 * out_channels
+        print("mlp_in_dim:", mlp_in_dim)
         self.mlp = nn.Sequential(
-            nn.Linear(out_channels, mlp_hidden_dim),
+            nn.Linear(mlp_in_dim, mlp_hidden_dim),
             nn.ReLU(),
             nn.Linear(mlp_hidden_dim, mlp_out_dim)
         )
 
     def forward(self, polylines, polylines_mask):
         encoded_features = self.encoder(polylines, polylines_mask)
+
+        print("encoded_features Shape:", encoded_features.shape)
+
+        encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
+        print("encoded_features Shape: reshape", encoded_features.shape)
+
         output = self.mlp(encoded_features)
+        print("output Shape no reshape:", output.shape)
+        output = output.reshape(polylines.shape[0], polylines.shape[1],-1)
+        print("output Shape reshape:", output.shape)
         return output
 
     def compute_loss(self, output, target, mask):
@@ -84,9 +96,9 @@ if __name__ == "__main__":
     hidden_dim = 64
     num_layers = 3
     num_pre_layers = 1
-    out_channels = 128
+    out_channels = 10   # emb的维度
     mlp_hidden_dim = 256
-    mlp_out_dim = 40 # 20 * 2
+    mlp_out_dim = num_polylines * 40 # 20 * 2
     model = MLPWithPolylineEncoder(in_channels, hidden_dim, num_layers, num_pre_layers, out_channels, mlp_hidden_dim, mlp_out_dim)
 
     # Create polylines with y-coordinates as horizontal lines
@@ -109,7 +121,6 @@ if __name__ == "__main__":
 
     print("Output Shape:", output.shape)
     print("Loss:", loss.item())
-    exit()
 
 
         # Apply the mask to remove the specific line
