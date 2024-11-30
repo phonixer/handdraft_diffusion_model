@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-# from utils import common_layers
-import common_layers
+from utils import common_layers
+# import common_layers
 
 class PointNetPolylineEncoder(nn.Module):
     def __init__(self, in_channels, hidden_dim, num_layers=3, num_pre_layers=1, out_channels=None):
@@ -65,19 +65,27 @@ class MLPWithPolylineEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(mlp_hidden_dim, mlp_out_dim)
         )
+        
+        self.init_weights()
+
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def forward(self, polylines, polylines_mask):
         encoded_features = self.encoder(polylines, polylines_mask)
 
-        print("encoded_features Shape:", encoded_features.shape)
+        # print("encoded_features Shape:", encoded_features.shape)
 
         encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
-        print("encoded_features Shape: reshape", encoded_features.shape)
+        # print("encoded_features Shape: reshape", encoded_features.shape)
 
         output = self.mlp(encoded_features)
-        print("output Shape no reshape:", output.shape)
+        # print("output Shape no reshape:", output.shape)
         output = output.reshape(polylines.shape[0], polylines.shape[1],-1)
-        print("output Shape reshape:", output.shape)
+        # print("output Shape reshape:", output.shape)
         return output
 
     def compute_loss(self, output, target, mask):
