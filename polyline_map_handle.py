@@ -329,8 +329,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 act_dim = num_of_src_polylines * 20 * 2
 obs_dim = num_of_src_polylines * 20 * 2
-T = 100
-epoch = 10000
+
 
 print('map_polylines.shape', map_polylines.shape)
 
@@ -363,18 +362,23 @@ mask_expanded = map_polylines_mask
 mask_expanded = mask_expanded.unsqueeze(-1).expand_as(x)
 print(mask_expanded.shape)
 
+batch_size, num_polylines, num_points_each_polyline, _ = x.shape
+# 每组polyline 减去 center object的位置
+print(center_objects[:, None, None, 0:2].shape) 
+x = x - center_objects[:, None, None, 0:2] #实现了每组polyline 减去 center object的位置
+
 x_0 = x[:,:,:, 0][map_polylines_mask == 1]
 x_1 = x[:,:,:, 1][map_polylines_mask == 1]
 print(x_0.shape)
 # 对 x[:, :, :, 0] 进行归一化
 x_min_0 = x_0.min()
 x_max_0 = x_0.max()
-x[:, :, :, 0] = (x[:, :, :, 0] - x_min_0) / (x_max_0 - x_min_0) * 2 - 1
+x[:, :, :, 0] = (x[:, :, :, 0] - x_min_0) / (x_max_0 - x_min_0)  - 0.5
 
 # 对 x[:, :, :, 1] 进行归一化
 x_min_1 = x_1.min()
 x_max_1 = x_1.max()
-x[:, :, :, 1] = (x[:, :, :, 1] - x_min_1) / (x_max_1 - x_min_1) * 2 - 1
+x[:, :, :, 1] = (x[:, :, :, 1] - x_min_1) / (x_max_0 - x_min_0)  - 0.5
 
 state_min = state[mask_expanded == 1].min()
 state_max = state[mask_expanded == 1].max()
@@ -415,13 +419,15 @@ print(state.shape)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+lr = 1e-4
+epoch = 50000
 obs_dim = 11
 batch_size = 160
 num_polylines = num_of_src_polylines
 num_points_each_polylines = 20
 in_channels = 2
 hidden_dim = 256
-T = 50
+T = 10
 loss_type = 'l2'
 beta_schedule = 'linear'
 clip_denoised = True
@@ -479,19 +485,23 @@ result, diffusion_steps = model(state)
 
 loss = model.loss(x, state)
 
-# print(f"action: {result};loss: {loss.item()}")
+print(f"action: {result};loss: {loss.item()}")
 import matplotlib.pyplot as plt
 import torch.optim as optim
 
+# print(sum(state['polylines'].view(batch_size, -1) - x))
+# exit(0)
 
+optimizer = optim.Adam(model.parameters(), lr=lr)
+# T = 200
 
-optimizer = optim.Adam(model.parameters(), lr=0.0005)
 # 训练模型
 model.train()
 for i in range(epoch):
     loss = model.loss(x, state)
     loss.backward()
-    print(f"loss: {loss.item()}")
+    if i % 100 == 0:
+        print(f'epoch: {i}, loss: {loss.item()}')
     optimizer.step()
     optimizer.zero_grad()
 

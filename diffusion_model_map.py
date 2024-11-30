@@ -53,11 +53,19 @@ class MLPMap(nn.Module):
         self.t_dim = t_dim
         self.a_dim = action_dim
         self.device = device
-        self.agent_polyline_encoder = polyline_encoder.PointNetPolylineEncoder(
-            in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
-
+        # self.agent_polyline_encoder = polyline_encoder.PointNetPolylineEncoder(
+        #     in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
         mlp_in_dim = num_polylines * out_channels
-        print("mlp_in_dim:", mlp_in_dim)
+
+        # print("mlp_in_dim:", mlp_in_dim)
+        
+        self.MLP_polyline_encoder = nn.Sequential(
+            nn.Linear(num_polylines * num_points_each_polylines * in_channels, hidden_dim),
+            nn.Mish(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Mish(),
+            nn.Linear(hidden_dim, mlp_in_dim),
+            nn.Mish(),)
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(t_dim),
@@ -68,22 +76,25 @@ class MLPMap(nn.Module):
 
         input_dim = mlp_in_dim + action_dim + t_dim
         print("input_dim:", input_dim)
+        print("action_dim:", action_dim)
         self.input_layer = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(input_dim, mlp_hidden_dim),
             nn.Mish(),
         )
 
         self.mid_layer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(mlp_hidden_dim, mlp_hidden_dim),
             nn.Mish(),
-            nn.Linear(hidden_dim, 4 * hidden_dim),
+            nn.Linear(mlp_hidden_dim, 2 * mlp_hidden_dim),
             nn.Mish(),
-            nn.Linear(4 * hidden_dim, hidden_dim),
+            nn.Linear(2*mlp_hidden_dim, 2 * mlp_hidden_dim),
             nn.Mish(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(2 * mlp_hidden_dim, mlp_hidden_dim),
+            nn.Mish(),
+            nn.Linear(mlp_hidden_dim, action_dim),
             nn.Mish(),
         )
-        self.final_layer = nn.Linear(2 * hidden_dim, action_dim)
+        self.final_layer = nn.Linear(action_dim, action_dim)
 
         self.init_weights()
 
@@ -96,14 +107,16 @@ class MLPMap(nn.Module):
 
     def forward(self, x, time, state, **kwargs):
         t_emb = self.time_mlp(time)
-        polylines, polylines_mask = state['polylines'], state['polylines_mask']
-        encoded_features = self.agent_polyline_encoder(polylines, polylines_mask)
-        encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
+        # polylines, polylines_mask = state['polylines'], state['polylines_mask']
+        # encoded_features = self.agent_polyline_encoder(polylines, polylines_mask)
+        # encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
+        encoded_features = self.MLP_polyline_encoder(state['polylines'].view(state['polylines'].shape[0], -1))
 
         x = torch.cat([x, encoded_features, t_emb], dim=1)
         x1 = self.input_layer(x)
         x = self.mid_layer(x1)
-        x = torch.cat([x, x1], dim=1)
+        # x = torch.cat([x, x1], dim=1)
+        # x = x + state['polylines'].view(state['polylines'].shape[0], -1)
         x = self.final_layer(x)
         return x
 
@@ -207,24 +220,28 @@ class Diffusion(nn.Module):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         x_recon = self.model(x_noisy, t, state)
         assert noise.shape == x_recon.shape
-        polylines_mask = state['polylines_mask'].unsqueeze(-1).expand_as(state['polylines'])
+        polylines_mask = state['polylines_mask'].unsqueeze(-1).expand_as(state['polylines']).contiguous()
         # print("x_recon Shape:", x_recon.shape)
         # print("noise Shape:", noise.shape)
         # print("polylines_mask:", polylines_mask.shape)
         batch_size = x_start.shape[0]
-        weights = polylines_mask.reshape(batch_size, -1).float()
+        # print("batch_size:", batch_size)
+        weights = polylines_mask.view(batch_size, -1).float()
         # print("weights Shape:", weights.shape)
+
 
         if self.predict_epsilon:
             loss = self.loss_fn(x_recon, noise, weights)
         else:
             loss = self.loss_fn(x_recon, x_start, weights)
 
-        print("loss Shape:", loss.shape)
+        # print("loss Shape:", loss.shape)
         return loss
 
     def loss(self, x, state, weights=1.0):
+
         batch_size = len(x)
+
         t = torch.randint(0, self.T, (batch_size,), device=self.device).long()
         return self.p_losses(x, state, t, weights)
 
