@@ -326,39 +326,87 @@ from diffusion_model_map import Diffusion
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
-batchsize = 200
+batchsize = 8
 act_dim = 50 * 20 * 2
 obs_dim = 50 * 20 * 2
 T = 10
 epoch = 1000
-# x = torch.randn(256, 2).to(device)  # Batch, action_dim
-# state = torch.randn(256, 11).to(device)  # Batch, state_dim
-mask = abs(map_polylines[:,:,:,:2])<1
 
-map_polylines[:,:,:,:2][mask] = map_polylines[map_polylines_mask].mean()  # Batch, state_dim
-print(map_polylines.shape)
+print('map_polylines.shape', map_polylines.shape)
+
+# print(map_polylines([map_polylines_mask]).shape)
+print('map_polylines_mask', map_polylines_mask.shape)
+# 将掩码扩展到与 map_polylines 相同的形状
+mask_expanded = map_polylines_mask.unsqueeze(-1).expand_as(map_polylines)
+
+# 使用掩码过滤 map_polylines 中的数据
+filtered_map_polylines = map_polylines * mask_expanded
+
+print('filtered_map_polylines.shape', filtered_map_polylines.shape)
+
 
 # 生成 x 张量，并转换为浮点类型
-x = torch.tensor(map_polylines[:,:,:,:2] ).to(device)
+x = map_polylines[:,:,:,:2] 
 # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
-state = torch.tensor(map_polylines[:,:,:,:2]).to(device)
+state = map_polylines[:,:,:,:2]
+mask_expanded = map_polylines_mask.unsqueeze(-1).expand_as(x)
 
 
 
 # 归一化 变到 -1, 1
-x = (x - x.min()) / (x.max() - x.min()) * 2 - 1
-state = (state - state.min()) / (state.max() - state.min()) * 2 - 1
+# valid_points = (x[:, :, :, 0] != 0) | (x[:, :, :, 1] != 0)
+# print(valid_points.shape)
+# print(mask_expanded.shape)
+# mask_expanded = map_polylines_mask | valid_points
 
+mask_expanded = map_polylines_mask
+mask_expanded = mask_expanded.unsqueeze(-1).expand_as(x)
+print(mask_expanded.shape)
+
+x_0 = x[:,:,:, 0][map_polylines_mask == 1]
+x_1 = x[:,:,:, 1][map_polylines_mask == 1]
+print(x_0.shape)
+# 对 x[:, :, :, 0] 进行归一化
+x_min_0 = x_0.min()
+x_max_0 = x_0.max()
+x[:, :, :, 0] = (x[:, :, :, 0] - x_min_0) / (x_max_0 - x_min_0) * 2 - 1
+
+# 对 x[:, :, :, 1] 进行归一化
+x_min_1 = x_1.min()
+x_max_1 = x_1.max()
+x[:, :, :, 1] = (x[:, :, :, 1] - x_min_1) / (x_max_1 - x_min_1) * 2 - 1
+
+state_min = state[mask_expanded == 1].min()
+state_max = state[mask_expanded == 1].max()
+state = (state - state_min) / (state_max - state_min) * 2 - 1
+
+
+# 画图
+x.shape
+num_center_objects, num_of_src_polylines, num_points_each_polyline, _ = x.shape
+print(x.shape)
+plt.figure(figsize=(15, 5))
+for i in range(1, num_center_objects):
+    # plt.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
+    
+    for j in range(num_of_src_polylines):
+        # 排除掉（0，0）
+        valid_points = (abs(x[i, j, :, 0]) < 2) | (abs(x[i, j, :, 1]) < 2)
+        for value in np.unique(valid_values):
+            points = x[i, j, valid_points, :]
+            plt.plot(points[:, 0], points[:, 1])
+
+plt.savefig('x_state.png')
 
 
 
 # # 复制 x 和 state，使其形状为 (100, 10, 2)
-x = x.repeat(25, 1, 1, 1)
-state = state.repeat(25, 1, 1, 1)
-
-# Reshape x and state to (100,)
-x = x.view(batchsize, -1)
-state = state.view(batchsize, -1)
+x = x.repeat(1, 1, 1, 1)
+state = state.repeat(1, 1, 1, 1)
+map_polylines_mask = map_polylines_mask.repeat(1, 1, 1)
+# # Reshape x and state to (100,)
+# x = x.view(batchsize, -1)
+# state = state.view(batchsize, -1)
 print(x.shape)
 print(state.shape)
 
@@ -367,9 +415,33 @@ print(state.shape)
 
 
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+act_dim = 160
+obs_dim = 11
+batch_size = 100
+num_polylines = 50
+num_points_each_polylines = 20
+in_channels = 2
+hidden_dim = 256
+T = 10
+loss_type = 'l2'
+beta_schedule = 'linear'
+clip_denoised = True
+predict_epsilon = True
+
+# polylines = torch.randn(batch_size, num_polylines, num_points_each_polylines, in_channels).to(device)
+# polylines_mask = torch.randint(0, 2, (batch_size, num_polylines, num_points_each_polylines)).bool().to(device)
+
+# x = torch.randn(batch_size, act_dim).to(device)
+print('state:', state.shape)
+print('map_polylines_mask:', map_polylines_mask.shape)
+print('num_polylines * out_channels:', num_polylines * out_channels)
+state = {'polylines': state.to(device), 'polylines_mask': map_polylines_mask.to(device)}
+
+model = Diffusion(loss_type=loss_type, beta_schedule=beta_schedule, clip_denoised=clip_denoised, predict_epsilon=predict_epsilon, obs_dim=obs_dim, act_dim=act_dim, hidden_dim=hidden_dim, device=device, T=T)
 
 
-model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim= 2 * act_dim, device=device, T=T)
+# model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim= 2 * act_dim, device=device, T=T)
 result = model(state)  # Sample result
 
 loss = model.loss(x, state)

@@ -207,11 +207,31 @@ class Diffusion(nn.Module):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         x_recon = self.model(x_noisy, t, state)
         assert noise.shape == x_recon.shape
+        polylines_mask = state['polylines_mask']
+        print("x_recon Shape:", x_recon.shape)
+        print("noise Shape:", noise.shape)
+        print("polylines_mask:", polylines_mask.shape)
+        batch_size = x_start.shape[0]
+        weights = polylines_mask.reshape(batch_size, -1).float()
+        # print("polylines_mask:", polylines_mask.shape)
+        print("weights Shape:", weights.shape)
+
 
         if self.predict_epsilon:
             loss = self.loss_fn(x_recon, noise, weights)
         else:
             loss = self.loss_fn(x_recon, x_start, weights)
+
+        print("loss Shape:", loss.shape)
+        
+
+        # # exit()
+        # if loss is not None:
+        #     polylines_mask = polylines_mask.unsqueeze(-1)  # Ensure mask has the same shape as loss
+        #     loss = loss * polylines_mask
+            
+        #     print("loss Shape:", loss.shape)
+        #     print("polylines_mask Shape:", polylines_mask.shape)
 
         return loss
 
@@ -225,7 +245,7 @@ class Diffusion(nn.Module):
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    act_dim = 5
+    act_dim = 160
     obs_dim = 11
     batch_size = 100
     num_polylines = 8
@@ -249,6 +269,8 @@ if __name__ == '__main__':
 
     loss = model.loss(x, state)
     print(f"action: {result}; loss: {loss.item()}")
+
+    print("polylines:", polylines)
 
     import matplotlib.pyplot as plt
     import torch.optim as optim
