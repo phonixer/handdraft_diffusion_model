@@ -197,7 +197,7 @@ class Diffusion(nn.Module):
 
     def q_sample(self, x_start, t, noise):
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = torch.randn_like(x_start, device=self.device)
         sample = (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
                   extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
         return sample
@@ -207,13 +207,13 @@ class Diffusion(nn.Module):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         x_recon = self.model(x_noisy, t, state)
         assert noise.shape == x_recon.shape
-        polylines_mask = state['polylines_mask']
-        print("x_recon Shape:", x_recon.shape)
-        print("noise Shape:", noise.shape)
-        print("polylines_mask:", polylines_mask.shape)
+        polylines_mask = state['polylines_mask'].unsqueeze(-1).expand_as(state['polylines'])
+        # print("x_recon Shape:", x_recon.shape)
+        # print("noise Shape:", noise.shape)
+        # print("polylines_mask:", polylines_mask.shape)
         batch_size = x_start.shape[0]
         weights = polylines_mask.reshape(batch_size, -1).float()
-        print("weights Shape:", weights.shape)
+        # print("weights Shape:", weights.shape)
 
         if self.predict_epsilon:
             loss = self.loss_fn(x_recon, noise, weights)
@@ -233,7 +233,7 @@ class Diffusion(nn.Module):
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    act_dim = 160
+    
     obs_dim = 11
     batch_size = 100
     num_polylines = 8
@@ -251,6 +251,7 @@ if __name__ == '__main__':
     out_channels = 10
     mlp_hidden_dim = 256
     mlp_out_dim = 320
+    act_dim = 320
 
     polylines = torch.randn(batch_size, num_polylines, num_points_each_polylines, in_channels).to(device)
     polylines_mask = torch.randint(0, 2, (batch_size, num_polylines, num_points_each_polylines)).bool().to(device)
