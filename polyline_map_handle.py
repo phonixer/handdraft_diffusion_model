@@ -178,7 +178,7 @@ print('point_dim:', point_dim)  # 7
 # 超参数
 point_sampled_interval = 1     # 采样间隔
 vector_break_dist_thresh = 1.0 # 向量断裂距离阈值
-num_points_each_polyline = 20  # 每个polyline的点数
+num_points_each_polyline = 5  # 每个polyline的点数
 
 
 # all_polylines (num_points, 7): [x, y, z, dir_x, dir_y, dir_z, global_type]
@@ -327,8 +327,8 @@ from diffusion_model_map import Diffusion
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
 
-act_dim = num_of_src_polylines * 20 * 2
-obs_dim = num_of_src_polylines * 20 * 2
+act_dim = num_of_src_polylines * 5 * 2
+obs_dim = num_of_src_polylines * 5 * 2
 
 
 print('map_polylines.shape', map_polylines.shape)
@@ -364,7 +364,7 @@ print(mask_expanded.shape)
 
 batch_size, num_polylines, num_points_each_polyline, _ = x.shape
 # 每组polyline 减去 center object的位置
-print(center_objects[:, None, None, 0:2].shape) 
+# print(center_objects[:, None, None, 0:2].shape) 
 x = x - center_objects[:, None, None, 0:2] #实现了每组polyline 减去 center object的位置
 
 x_0 = x[:,:,:, 0][map_polylines_mask == 1]
@@ -378,7 +378,7 @@ x[:, :, :, 0] = (x[:, :, :, 0] - x_min_0) / (x_max_0 - x_min_0)  - 0.5
 # 对 x[:, :, :, 1] 进行归一化
 x_min_1 = x_1.min()
 x_max_1 = x_1.max()
-x[:, :, :, 1] = (x[:, :, :, 1] - x_min_1) / (x_max_0 - x_min_0)  - 0.5
+x[:, :, :, 1] = (x[:, :, :, 1] - x_min_1) / (x_max_1 - x_min_1)  - 0.5
 
 state_min = state[mask_expanded == 1].min()
 state_max = state[mask_expanded == 1].max()
@@ -405,9 +405,9 @@ plt.savefig('x_state.png')
 
 
 # # 复制 x 和 state，使其形状为 (100, 10, 2)
-x = x.repeat(20, 1, 1, 1)
-state = state.repeat(20, 1, 1, 1)
-map_polylines_mask = map_polylines_mask.repeat(20, 1, 1)
+x = x.repeat(40, 1, 1, 1)
+state = state.repeat(40, 1, 1, 1)
+map_polylines_mask = map_polylines_mask.repeat(40, 1, 1)
 # # Reshape x and state to (100,)
 # x = x.view(batchsize, -1)
 # state = state.view(batchsize, -1)
@@ -419,15 +419,15 @@ print(state.shape)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-lr = 1e-4
+lr = 5e-5
 epoch = 50000
 obs_dim = 11
-batch_size = 160
+batch_size = 320
 num_polylines = num_of_src_polylines
-num_points_each_polylines = 20
+num_points_each_polylines = 5
 in_channels = 2
 hidden_dim = 256
-T = 10
+T = 50
 loss_type = 'l2'
 beta_schedule = 'linear'
 clip_denoised = True
