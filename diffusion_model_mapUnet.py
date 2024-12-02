@@ -56,20 +56,6 @@ class SinusoidalPosEmb(nn.Module):
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
-
-class ConvModel(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size):
-        super(ConvModel, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
-
-    def forward(self, x):
-        return self.conv(x)
-        # x shape: (batch_size, num_polylines, num_points_each_polylines, in_channels)
-        # Permute to match the expected input shape for Conv2d: (batch_size, in_channels, height, width)
-        # x = x.permute(0, 3, 1, 2)
-        x = self.conv(x)
-        return x
-    
 class MLPMap(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim, device, t_dim, num_polylines, num_points_each_polylines, in_channels, num_layers, num_pre_layers, out_channels, mlp_hidden_dim, mlp_out_dim):
         super(MLPMap, self).__init__()
@@ -77,36 +63,19 @@ class MLPMap(nn.Module):
         self.t_dim = t_dim
         self.a_dim = action_dim
         self.device = device
-        self.agent_polyline_encoder = polyline_encoder.PointNetPolylineEncoder(
-            in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
-        # (batch_size, num_polylines, num_points_each_polylines, in_channels)
-
-        self.conv = nn.Sequential(
-            nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True),
-            ConvModel(in_channels=num_polylines, out_channels=2*num_polylines, kernel_size=3),
-            nn.Mish(),
-            ConvModel(in_channels=2*num_polylines, out_channels=2*num_polylines, kernel_size=3),
-            nn.Mish(),
-            ConvModel(in_channels=2*num_polylines, out_channels=1*num_polylines, kernel_size=3),
-            nn.Mish(),
-            #降采样
-            nn.AvgPool2d(4, 4),
-            ConvModel(in_channels=1*num_polylines, out_channels=1*num_polylines, kernel_size=3),
-        )
-
-
-
-
+        # self.agent_polyline_encoder = polyline_encoder.PointNetPolylineEncoder(
+        #     in_channels, hidden_dim, num_layers, num_pre_layers, out_channels)
         mlp_in_dim = num_polylines * out_channels
 
         # print("mlp_in_dim:", mlp_in_dim)
         
-        self.MLP_polyline_encoder2 = nn.Sequential(
+        self.MLP_polyline_encoder = nn.Sequential(
             nn.Linear(num_polylines * num_points_each_polylines * in_channels, hidden_dim),
             nn.Mish(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Mish(),
-            nn.Linear(hidden_dim, mlp_in_dim),)
+            nn.Linear(hidden_dim, mlp_in_dim),
+            nn.Mish(),)
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(t_dim),
@@ -114,14 +83,6 @@ class MLPMap(nn.Module):
             nn.Mish(),
             nn.Linear(t_dim * 2, t_dim)
         )
-
-
-        t_Total_dim = t_dim + mlp_in_dim
-
-        self.time_mlp2 = nn.Sequential(
-            nn.Linear(t_Total_dim, t_dim * 2),
-            nn.Mish(),
-            nn.Linear(t_dim * 2, t_dim))
 
         input_dim = mlp_in_dim + action_dim + t_dim
         print("input_dim:", input_dim)
@@ -143,8 +104,6 @@ class MLPMap(nn.Module):
             nn.Linear(mlp_hidden_dim, action_dim),
             nn.Mish(),
         )
-
-        # self.decoder = nn.Sequential(nn.Linear(num_points_each_polylines * in_channels, num_points_each_polylines * in_channels), nn.Mish())
         self.final_layer = nn.Linear(action_dim, action_dim)
 
         self.init_weights()
@@ -158,33 +117,151 @@ class MLPMap(nn.Module):
 
     def forward(self, x, time, state, **kwargs):
         t_emb = self.time_mlp(time)
-        polylines, polylines_mask = state['polylines'], state['polylines_mask']
-        encoded_features = self.agent_polyline_encoder(polylines, polylines_mask)
-        encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
-        # print("x Shape:", state['polylines'].shape)
-        # p = self.conv(state['polylines'])
-        # print("p Shape:", p.shape)
-        # encoded_features = self.MLP_polyline_encoder2(p.view(p.shape[0], -1))
-        # print("encoded_features Shape:", encoded_features.shape)
+        # polylines, polylines_mask = state['polylines'], state['polylines_mask']
+        # encoded_features = self.agent_polyline_encoder(polylines, polylines_mask)
+        # encoded_features = encoded_features.reshape(encoded_features.shape[0], -1)
+        encoded_features = self.MLP_polyline_encoder(state['polylines'].view(state['polylines'].shape[0], -1))
 
-        # encoded_features = self.MLP_polyline_encoder(state['polylines'].view(state['polylines'].shape[0], -1))
-
-        # print('t', t_emb.shape)
-        
         x = torch.cat([x, encoded_features, t_emb], dim=1)
         x1 = self.input_layer(x)
-        # t_emb = self.time_mlp2(torch.cat([encoded_features, t_emb], dim=1))
-
-        # x = torch.cat([x1, t_emb], dim=1)
-        x = self.mid_layer(x)
+        x = self.mid_layer(x1)
         # x = torch.cat([x, x1], dim=1)
         # x = x + state['polylines'].view(state['polylines'].shape[0], -1)
-        # x = x.view(state['polylines'].shape)
-        # x = self.conv2(x)
-        # x = x.view(x.shape[0], -1)
         x = self.final_layer(x)
         return x
     
+
+class ResidualTemporalBlock(nn.Module):
+
+    def __init__(self, inp_channels, out_channels, embed_dim, horizon, kernel_size=5):
+        super().__init__()
+
+        self.blocks = nn.ModuleList([
+            Conv1dBlock(inp_channels, out_channels, kernel_size),
+            Conv1dBlock(out_channels, out_channels, kernel_size),
+        ])
+
+        self.time_mlp = nn.Sequential(
+            nn.Mish(),
+            nn.Linear(embed_dim, out_channels),
+            Rearrange('batch t -> batch t 1'),
+        )
+
+        self.residual_conv = nn.Conv1d(inp_channels, out_channels, 1) \
+            if inp_channels != out_channels else nn.Identity()
+
+    def forward(self, x, t):
+        '''
+            x : [ batch_size x inp_channels x horizon ]
+            t : [ batch_size x embed_dim ]
+            returns:
+            out : [ batch_size x out_channels x horizon ]
+        '''
+        out = self.blocks[0](x) + self.time_mlp(t)
+        out = self.blocks[1](out)
+        return out + self.residual_conv(x)
+
+
+class TemporalUnet(nn.Module):
+
+    def __init__(
+        self,
+        horizon,
+        transition_dim,
+        cond_dim,
+        dim=32,
+        dim_mults=(1, 2, 4, 8),
+        attention=False,
+    ):
+        super().__init__()
+
+        dims = [transition_dim, *map(lambda m: dim * m, dim_mults)]
+        in_out = list(zip(dims[:-1], dims[1:]))
+        print(f'[ models/temporal ] Channel dimensions: {in_out}')
+
+        time_dim = dim
+        self.time_mlp = nn.Sequential(
+            SinusoidalPosEmb(dim),
+            nn.Linear(dim, dim * 4),
+            nn.Mish(),
+            nn.Linear(dim * 4, dim),
+        )
+
+        self.downs = nn.ModuleList([])
+        self.ups = nn.ModuleList([])
+        num_resolutions = len(in_out)
+
+        print(in_out)
+        for ind, (dim_in, dim_out) in enumerate(in_out):
+            is_last = ind >= (num_resolutions - 1)
+
+            self.downs.append(nn.ModuleList([
+                ResidualTemporalBlock(dim_in, dim_out, embed_dim=time_dim, horizon=horizon),
+                ResidualTemporalBlock(dim_out, dim_out, embed_dim=time_dim, horizon=horizon),
+                Residual(PreNorm(dim_out, LinearAttention(dim_out))) if attention else nn.Identity(),
+                Downsample1d(dim_out) if not is_last else nn.Identity()
+            ]))
+
+            if not is_last:
+                horizon = horizon // 2
+
+        mid_dim = dims[-1]
+        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon)
+        self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim))) if attention else nn.Identity()
+        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon)
+
+        for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
+            is_last = ind >= (num_resolutions - 1)
+
+            self.ups.append(nn.ModuleList([
+                ResidualTemporalBlock(dim_out * 2, dim_in, embed_dim=time_dim, horizon=horizon),
+                ResidualTemporalBlock(dim_in, dim_in, embed_dim=time_dim, horizon=horizon),
+                Residual(PreNorm(dim_in, LinearAttention(dim_in))) if attention else nn.Identity(),
+                Upsample1d(dim_in) if not is_last else nn.Identity()
+            ]))
+
+            if not is_last:
+                horizon = horizon * 2
+
+        self.final_conv = nn.Sequential(
+            Conv1dBlock(dim, dim, kernel_size=5),
+            nn.Conv1d(dim, transition_dim, 1),
+        )
+
+    def forward(self, x, cond, time):
+        '''
+            x : [ batch x horizon x transition ]
+        '''
+
+        x = einops.rearrange(x, 'b h t -> b t h')
+
+        t = self.time_mlp(time)
+        h = []
+
+        for resnet, resnet2, attn, downsample in self.downs:
+            x = resnet(x, t)
+            x = resnet2(x, t)
+            x = attn(x)
+            h.append(x)
+            x = downsample(x)
+
+        x = self.mid_block1(x, t)
+        x = self.mid_attn(x)
+        x = self.mid_block2(x, t)
+
+        for resnet, resnet2, attn, upsample in self.ups:
+            if x.shape[-1] == 26:
+                x = x[:, :, :-1]
+            x = torch.cat((x, h.pop()), dim=1)
+            x = resnet(x, t)
+            x = resnet2(x, t)
+            x = attn(x)
+            x = upsample(x)
+
+        x = self.final_conv(x)
+
+        x = einops.rearrange(x, 'b t h -> b h t')
+        return x
 
 
 class Diffusion(nn.Module):
