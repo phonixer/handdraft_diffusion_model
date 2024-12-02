@@ -327,22 +327,31 @@ from diffusion_model import Diffusion
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
 batchsize = 200
-act_dim = 160
+act_dim = 20
 obs_dim = 22
-T = 5
-epoch = 10000
+T = 20
+epoch = 20000
+lr = 1e-4
 # x = torch.randn(256, 2).to(device)  # Batch, action_dim
 # state = torch.randn(256, 11).to(device)  # Batch, state_dim
 
 # 生成 x 张量，并转换为浮点类型
-x = torch.tensor(obj_trajs_future[track_index_to_predict,:,:2]).to(device)
+x = torch.tensor(obj_trajs_future[track_index_to_predict,::8,:2]).to(device)
 # 生成 state 张量，每个 batch 的值都相同，并转换为浮点类型
 state = torch.tensor(obj_trajs_past[track_index_to_predict,:,:2]).to(device)
+x[0,:,:] = x[3,:,:]
+state[0,:,:] = state[3,:,:]
 
 # 将均值变成0 然后归一化
 # x 的每个点都减去第一个点
-x = (x - x[:, 0:1, :]) / 50
-state = (state - state[:, 0:1, :]) / 50
+x = (x - x[:, 0:1, :]) / 50 - 0.25
+x[1:3,:,1] = x[1:3,:,1] - 0.1
+x[2:3,:,0] = x[2:3,:,0] + 0.15
+
+state = (state - state[:, 0:1, :]) / 50 -0.25
+# 归一化到均值为0
+# x = (x - x.mean(dim=1, keepdim=True)) / 50
+# state = (state - state.mean(dim=1, keepdim=True)) / 50
 
 
 
@@ -354,6 +363,7 @@ state = state.repeat(25, 1, 1)
 # Reshape x and state to (100,)
 x = x.view(batchsize, -1)
 state = state.view(batchsize, -1)
+print('---------')
 print(x.shape)
 print(state.shape)
 
@@ -364,7 +374,7 @@ print(state.shape)
 
 
 
-model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim=2048, device=device, T=T)
+model = Diffusion(loss_type='l2', obs_dim=obs_dim, act_dim=act_dim, hidden_dim=800, device=device, T=T)
 result = model(state)  # Sample result
 
 loss = model.loss(x, state)
@@ -374,22 +384,49 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 
 
+# T = 200
 
-optimizer = optim.Adam(model.parameters(), lr=0.0003)
+# Check if training is required
+train_model = True
+model_path = 'polylinediffusion_model.pth'
+
+if os.path.exists(model_path):
+    print(f"Loading model from {model_path}")
+    model.load_state_dict(torch.load(model_path))
+    train_model = False
+else:
+    print("Model not found, training a new model")
 # 训练模型
-model.train()
-for i in range(epoch):
-    loss = model.loss(x, state)
-    loss.backward()
-    print(f"loss: {loss.item()}")
-    optimizer.step()
-    optimizer.zero_grad()
+from torch.optim.lr_scheduler import LambdaLR
+if train_model:
+    
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Define the learning rate scheduler
+    model.train()
+    for i in range(epoch):
+        loss = model.loss(x, state)
+        loss.backward()
+        if i % 100 == 0:
+            print(f'epoch: {i}, loss: {loss.item()}')
+        optimizer.step()
+        optimizer.zero_grad()
+
+    
+    # Save the trained model
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to {model_path}")
+
+# Evaluate the model
+model.eval()
+result, diffusion_steps = model(state)
+print('result', result.shape)
+
 
 
 
 # 训练结束后绘制扩散过程的图像
-state_test = state[4:5,:]
-x_test = x[4:5,:]
+state_test = state
+x_test = x
 print(state_test)
 print(state.shape)
 print(state_test.shape)
@@ -406,53 +443,257 @@ print(x_test)
 print(len(diffusion_steps))
 
 # 恢复形状
-x_test = x_test.view(-1, 2)
+x_test = x_test.view(batchsize, -1, 2)
 print(x_test.shape)
-action = action.view(-1, 2)
+action = action.view(batchsize, -1, 2)
 print(action.shape)
-state_test = state_test.view(-1, 2)
+state_test = state_test.view(batchsize, -1, 2)
+# Calculate endpoint error
+endpoints_gt = x_test[:, -1, :]  # Ground truth endpoints
+endpoints_pred = action[:, -1, :]  # Predicted endpoints
 
-# 绘制扩散过程的图像
-num_steps = len(diffusion_steps)
-steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+# 放到cpu上
+endpoints_gt = endpoints_gt.cpu().detach().numpy()
+endpoints_pred = endpoints_pred.cpu().detach().numpy()
 x_test = x_test.cpu().detach().numpy()
-action = action.cpu().detach().numpy()
-state_test = state_test.cpu().detach().numpy()
+action = action.cpu().detach().numpy()  
 
+endpoint_error = np.linalg.norm(endpoints_pred - endpoints_gt, axis=-1)
+total_endpoint_error = endpoint_error.sum()
+average_endpoint_error = total_endpoint_error / np.prod(endpoints_gt.shape[:-1])
+percentage_endpoint_error = (total_endpoint_error / np.linalg.norm(endpoints_gt, axis=-1).sum()) * 100
+
+
+print(f"Total Endpoint Error: {total_endpoint_error}")
+print(f"Average Endpoint Error: {average_endpoint_error}")
+print(f"Percentage Endpoint Error: {percentage_endpoint_error}%")
+# 计算平均所有点误差
+point_error = np.linalg.norm(action - x_test, axis=-1)
+total_point_error = point_error.sum()
+average_point_error = total_point_error / np.prod(x_test.shape[:-1])
+percentage_point_error = (total_point_error / np.linalg.norm(x_test, axis=-1).sum()) * 100
+
+
+print(f"Total Point Error: {total_point_error}")
+print(f"Average Point Error: {average_point_error}")
+print(f"Percentage Point Error: {percentage_point_error}%")
+
+
+# Plotting the results
 plt.figure(figsize=(15, 5))
-for step_idx in steps_to_plot:
-    step = diffusion_steps[step_idx].cpu().detach().numpy().reshape(80, 2)
-    # print(step)
-    plt.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
+num_plots_per_row = 5
+polt_item = [0,3,4,5,6]
+num_rows = (len(polt_item) + num_plots_per_row - 1) // num_plots_per_row
 
-plt.scatter(x_test[:, 0], x_test[:, 1], label='Ground Truth', color='g')
-plt.scatter(action[:, 0], action[:, 1], label='Predicted', color='r')
-plt.scatter(state_test[:, 0], state_test[:, 1], label='Start', color='b')
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+for i in range(len(polt_item)):
+    ax = axes[i]
 
-# print(action)
-print(action.shape)
+    valid_points = (abs(action[polt_item[i],  :, 0]) < 2) & (abs(action[polt_item[i],  :, 1]) < 2)
+    points_action = action[polt_item[i],  valid_points, :]
+    points_x_test = x_test[polt_item[i],  valid_points, :]
+    ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if i == 0 else "")
+    ax.set_title(f'Center Object {i}')
+    ax.legend()
 
-plt.title('Diffusion Process')
-plt.xlabel('X')
-plt.ylabel('Y')
-plt.legend()
+# plt.title('Predicted vs Ground Truth Polylines')
+
 plt.tight_layout()
-plt.savefig('diffusion.png')
+plt.savefig('predicted_vs_ground_truth_polylines.png')
 plt.show()
 
 
-# 只画预测的
+
+
+
+# Plotting the results
 plt.figure(figsize=(15, 5))
+num_plots_per_row = 5
+polt_item = [0,3,4,5,6]
+num_rows = (len(polt_item) + num_plots_per_row - 1) // num_plots_per_row
 
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+for i in range(len(polt_item)):
+    ax = axes[i]
 
-plt.scatter(x_test[:, 0], x_test[:, 1], label='Ground Truth', color='g')
-plt.scatter(action[:, 0], action[:, 1], label='Predicted', color='r')
-plt.scatter(state_test[:, 0], state_test[:, 1], label='Start', color='b')
+    valid_points = (abs(action[polt_item[i],  :, 0]) < 2) & (abs(action[polt_item[i],  :, 1]) < 2)
+    points_action = action[polt_item[i],  valid_points, :]
+    points_x_test = x_test[polt_item[i],  valid_points, :]
+    ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if i == 0 else "")
+    ax.set_title(f'Center Object {i}')
+    ax.legend()
 
-plt.title('Diffusion Process')
-plt.xlabel('X')
-plt.ylabel('Y')
+# plt.title('Predicted vs Ground Truth Polylines')
+
+plt.tight_layout()
+plt.savefig('predicted_vs_ground_truth_polylines.png')
+plt.show()
+
+# Plotting endpoint errors
+plt.figure(figsize=(15, 5))
+plt.plot(endpoint_error.flatten(), 'bo-', label='Endpoint Error')
+plt.title('Endpoint Error for Each Polyline')
+plt.xlabel('Polyline Index')
+plt.ylabel('Error')
 plt.legend()
 plt.tight_layout()
-plt.savefig('diffusion_predict.png')
+plt.savefig('endpoint_error.png')
+plt.show()
+
+
+
+# 画降噪过程
+# Plotting the results
+plt.figure(figsize=(15, 5))
+num_plots_per_row = 5
+polt_item = [0,3,4,5,6]
+num_rows = (len(polt_item) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+
+num_steps = len(diffusion_steps)
+steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+
+for i in range(len(polt_item)):
+    ax = axes[i]
+    for j in range(num_steps):
+        step = diffusion_steps[j].view(batchsize, -1, 2).cpu().detach().numpy()
+        valid_points = (abs(step[polt_item[i], :, 0]) < 2) & (abs(step[polt_item[i], :, 1]) < 2)
+        points = step[polt_item[i], valid_points, :]
+        # 画点
+        ax.plot(points[:, 0], points[:, 1], 'ro', alpha=j / num_steps)
+
+    valid_points = (abs(action[polt_item[i],  :, 0]) < 2) & (abs(action[polt_item[i],  :, 1]) < 2)
+    points_action = action[polt_item[i],  valid_points, :]
+    points_x_test = x_test[polt_item[i],  valid_points, :]
+    ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if i == 0 else "")
+    ax.set_title(f'Center Object {i}')
+    ax.legend()
+
+# plt.title('Predicted vs Ground Truth Polylines')
+
+plt.tight_layout()
+plt.savefig('Diffusion5polylines.png')
+plt.show()
+
+# Plotting endpoint errors
+plt.figure(figsize=(15, 5))
+plt.plot(endpoint_error.flatten(), 'bo-', label='Endpoint Error')
+plt.title('Endpoint Error for Each Polyline')
+plt.xlabel('Polyline Index')
+plt.ylabel('Error')
+plt.legend()
+plt.tight_layout()
+plt.savefig('endpoint_error.png')
+plt.show()
+
+
+polt_item = [0,3,4,5,6]
+# 计算polt_item的各种误差
+# 放到cpu上
+
+
+endpoints_gt = endpoints_gt[polt_item]
+endpoints_pred = endpoints_pred[polt_item]
+x_test = x_test[polt_item]
+action = action[polt_item]
+
+endpoint_error = np.linalg.norm(endpoints_pred - endpoints_gt, axis=-1)
+total_endpoint_error = endpoint_error.sum()
+average_endpoint_error = total_endpoint_error / np.prod(endpoints_gt.shape[:-1])
+percentage_endpoint_error = (total_endpoint_error / np.linalg.norm(endpoints_gt, axis=-1).sum()) * 100
+
+
+print(f"Total Endpoint Error: {total_endpoint_error}")
+print(f"Average Endpoint Error: {average_endpoint_error}")
+print(f"Percentage Endpoint Error: {percentage_endpoint_error}%")
+# 计算平均所有点误差
+point_error = np.linalg.norm(action - x_test, axis=-1)
+total_point_error = point_error.sum()
+average_point_error = total_point_error / np.prod(x_test.shape[:-1])
+percentage_point_error = (total_point_error / np.linalg.norm(x_test, axis=-1).sum()) * 100
+
+
+print(f"Total Point Error: {total_point_error}")
+print(f"Average Point Error: {average_point_error}")
+print(f"Percentage Point Error: {percentage_point_error}%")
+
+
+
+num_plots_per_row = 11
+num_rows = (len(steps_to_plot) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(40, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(len(steps_to_plot)):
+
+    step_idx = steps_to_plot[i]
+
+
+    ax = axes[i]
+
+
+    j = 0
+
+    step = diffusion_steps[step_idx].view(batchsize, -1, 2).cpu().detach().numpy()
+    valid_points = (abs(action[j,  :, 0]) < 2) & (abs(action[j,  :, 1]) < 2)
+    points_action = action[j,  valid_points, :]
+    points_x_test = x_test[j,  valid_points, :]
+    ax.plot(points_action[:, 0], points_action[:, 1], 'ro', label='Predicted' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if i == 0 else "")
+
+    ax.scatter(step[j, :, 0], step[j, :, 1], label=f'Step {step_idx}')
+    ax.set_title(f'Step {step_idx}')
+    ax.legend()
+
+
+
+
+plt.tight_layout()
+plt.savefig('1mapDIffusionprocesscenter_objects_comparison.png')
+plt.show()
+
+
+steps_to_plot = range(15, 20)
+num_plots_per_row = 5
+num_rows = (len(steps_to_plot) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(40, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(len(steps_to_plot)):
+
+    step_idx = steps_to_plot[i]
+
+
+    ax = axes[i]
+
+
+    j = 0
+
+    step = diffusion_steps[step_idx].view(batchsize, -1, 2).cpu().detach().numpy()
+    valid_points = (abs(action[j,  :, 0]) < 2) & (abs(action[j,  :, 1]) < 2)
+    points_action = action[j,  valid_points, :]
+    points_x_test = x_test[j,  valid_points, :]
+    ax.plot(points_action[:, 0], points_action[:, 1], 'ro', label='Predicted' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if i == 0 else "")
+    ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'go', label='Ground Truth' if i == 0 else "")
+
+
+    ax.scatter(step[j, :, 0], step[j, :, 1], label=f'Step {step_idx}')
+    ax.set_title(f'Step {step_idx}')
+    ax.legend()
+
+
+
+
+plt.tight_layout()
+plt.savefig('1mapDIffusionprocesscenter_objects_comparison2.png')
 plt.show()
