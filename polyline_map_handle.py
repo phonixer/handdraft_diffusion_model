@@ -242,7 +242,7 @@ center_offset= [30.0, 0]
 
 
 center_objects = torch.from_numpy(center_objects)
-num_of_src_polylines = 4
+num_of_src_polylines = 8
 polyline_center = batch_polylines[:, :, 0:2].sum(dim=1) / torch.clamp_min(batch_polylines_mask.sum(dim=1).float()[:, None], min=1.0)
 center_offset_rot = torch.from_numpy(np.array(center_offset, dtype=np.float32))[None, :].repeat(num_center_objects, 1)
 # center_offset_rot = common_utils.rotate_points_along_z(
@@ -418,23 +418,25 @@ print(state.shape)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 lr = 4e-5
-epoch = 50000
+epoch = 10000
 obs_dim = 11
 batch_size = 320
 num_polylines = num_of_src_polylines
-num_points_each_polylines = 5
+num_points_each_polylines = num_points_each_polyline
 in_channels = 2
 hidden_dim = 256
-T = 50
+T = 10
 loss_type = 'l2'
 beta_schedule = 'linear'
 clip_denoised = True
-predict_epsilon = True
+predict_epsilon = False
 t_dim = 16
 num_layers = 3
 num_pre_layers = 1
 out_channels = 10
 mlp_hidden_dim = 1024
+train_model = True
+
 mlp_out_dim = num_polylines * num_points_each_polylines * in_channels
 act_dim = num_polylines * num_points_each_polylines * in_channels
 
@@ -494,10 +496,9 @@ optimizer = optim.Adam(model.parameters(), lr=lr)
 # T = 200
 
 # Check if training is required
-train_model = True
 model_path = 'diffusion_model.pth'
 
-if os.path.exists(model_path):
+if os.path.exists(model_path) and train_model == False:
     print(f"Loading model from {model_path}")
     model.load_state_dict(torch.load(model_path))
     train_model = False
@@ -517,7 +518,7 @@ if train_model:
     for i in range(epoch):
         loss = model.loss(x, state)
         loss.backward()
-        if i % 100 == 0:
+        if i % 1000 == 0:
             print(f'epoch: {i}, loss: {loss.item()}')
         optimizer.step()
         optimizer.zero_grad()
@@ -531,25 +532,10 @@ if train_model:
 model.eval()
 result, diffusion_steps = model(state)
 print('result', result.shape)
-
-
-
-
-# 给测试
-model.eval()
-result, diffusion_steps = model(state)
-print('result', result.shape)
-
-
+loss = model.loss(x, state)
 # 训练结束后绘制扩散过程的图像
 action = result
 x_test = x
-
-
-# action, diffusion_steps = model.sample(state_test)
-
-# 算下loss
-# loss = model.loss(x_test, state_test)
 print(f"action: {action.shape}; loss: {loss.item()}")
 
 # Output ground truth shape
@@ -565,13 +551,13 @@ print(action.shape)
 # Plot diffusion process
 num_steps = len(diffusion_steps)
 steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
-# 逆归一化
+# # 逆归一化
 x_test[:, :, :, 0] = (x_test[:, :, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
 x_test[:, :, :, 1] = (x_test[:, :, :, 1] + 0.5) * (x_max_1 - x_min_1) + x_min_1
 
 action[:, :, :, 0] = (action[:, :, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
 action[:, :, :, 1] = (action[:, :, :, 1] + 0.5) * (x_max_1 - x_min_1) + x_min_1
-# 加上center object的位置
+# # 加上center object的位置
 # x_test = x_test + center_objects[:, None, None, 0:2]
 # action = action + center_objects[:, None, None, 0:2]
 
@@ -656,7 +642,7 @@ plt.tight_layout()
 plt.savefig('center_objects_comparison.png')
 plt.show()
 
-for step_idx in steps_to_plot:
+for step_idx in range(T):
     step = diffusion_steps[step_idx].view(batch_size, num_polylines, num_points_each_polylines, in_channels)
     # 逆归一化
     step[:,:, :, 0] = (step[:,:, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
@@ -749,7 +735,7 @@ plt.show()
 
 
 num_plots_per_row = 5
-steps_to_plot = range(45,50)
+steps_to_plot = range(T-5,T)
 num_rows = (len(steps_to_plot) + num_plots_per_row - 1) // num_plots_per_row
 
 fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
