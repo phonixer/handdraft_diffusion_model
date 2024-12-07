@@ -82,3 +82,51 @@ class PositionalEmbedding(nn.Module):
         def forward(self, x):
             batch, seq_len = x.shape
             return self.encoding[:seq_len, :]
+
+class LayerNorm(nn.Module):
+    def __init__(self, d_model, eps=1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        std = x.std(dim=-1, keepdim=True)
+        out  = (x - mean) / (std + self.eps)
+        out = self.gamma * out + self.beta
+        return out# 从代码上就是对最后一维度进行归一化
+    
+
+    # FFN
+    class PositionwiseFeedforward(nn.Module):
+        def __init__(self, d_model, hidden, dropout=0.1):
+            super().__init__()
+
+            self.linear1 = nn.Linear(d_model, hidden)
+            self.dropout = nn.Dropout(dropout)
+            self.linear2 = nn.Linear(hidden, d_model)
+
+        def forward(self, x):
+            x = self.linear1(x)
+            x = F.relu(x)
+            x = self.dropout(x) # 意义，减少激活神经元的一些连接
+            x = self.linear2(x)
+
+            return x
+        
+class TransformerEmbedding(nn.Module):
+    def __init__(self, vocab_size, d_model, maxlen, device):
+        super().__init__()
+        self.token_embedding = TakenEmbedding(vocab_size, d_model)
+        self.position_embedding = PositionalEmbedding(d_model, maxlen, device)
+        self.LayerNorm = LayerNorm(d_model)
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, x):
+        token_embed = self.token_embedding(x)
+        position_embed = self.position_embedding(x)
+        x = token_embed + position_embed
+        x = self.LayerNorm(x)
+        x = self.dropout(x)
+        return x
