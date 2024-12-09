@@ -145,7 +145,7 @@ plt.show()
 for i in range(1, num_center_objects):
     plt.plot(obj_trajs_past[track_index_to_predict[i], :, 0], obj_trajs_past[track_index_to_predict[i], :, 1], 'b', label='Past' if i == 1 else "")
     plt.plot(obj_trajs_future[track_index_to_predict[i], :, 0], obj_trajs_future[track_index_to_predict[i], :, 1], 'r', label='Future' if i == 1 else "")
-    plt.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
+    # plt.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
 
 plt.legend()
 plt.savefig('obj_trajs_past.png')
@@ -242,7 +242,7 @@ center_offset= [30.0, 0]
 
 
 center_objects = torch.from_numpy(center_objects)
-num_of_src_polylines = 3
+num_of_src_polylines = 8
 polyline_center = batch_polylines[:, :, 0:2].sum(dim=1) / torch.clamp_min(batch_polylines_mask.sum(dim=1).float()[:, None], min=1.0)
 center_offset_rot = torch.from_numpy(np.array(center_offset, dtype=np.float32))[None, :].repeat(num_center_objects, 1)
 # center_offset_rot = common_utils.rotate_points_along_z(
@@ -301,11 +301,9 @@ for i in range(1, num_center_objects):
             points = map_polylines[i, j, valid_points, :][map_polylines[i, j, valid_points, -1].numpy() == value]
             plt.plot(points[:, 0], points[:, 1], color=color)
 
-
-# 添加图例
-for value in unique_values:
-    color = value_to_color[value]
-    plt.plot([], [], color = color, label=f'Value {value}')
+# for value in unique_values:
+#     color = value_to_color[value]
+#     plt.plot([], [], color = 'g', label=f'Value {value}')
 
 plt.legend()
 
@@ -327,8 +325,8 @@ from diffusion_model_map import Diffusion
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = "cpu"  # cuda
 
-act_dim = num_of_src_polylines * 5 * 2
-obs_dim = num_of_src_polylines * 5 * 2
+act_dim = num_of_src_polylines * num_points_each_polyline * 2
+obs_dim = num_of_src_polylines * num_points_each_polyline * 2
 
 
 print('map_polylines.shape', map_polylines.shape)
@@ -366,7 +364,7 @@ batch_size, num_polylines, num_points_each_polyline, _ = x.shape
 # 每组polyline 减去 center object的位置
 # print(center_objects[:, None, None, 0:2].shape) 
 x = x - center_objects[:, None, None, 0:2] #实现了每组polyline 减去 center object的位置
-
+x[2,:,:,:] = x[4,:,:,:]
 x_0 = x[:,:,:, 0][map_polylines_mask == 1]
 x_1 = x[:,:,:, 1][map_polylines_mask == 1]
 print(x_0.shape)
@@ -419,24 +417,26 @@ print(state.shape)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-lr = 5e-5
-epoch = 50000
+lr = 4e-5
+epoch = 10000
 obs_dim = 11
 batch_size = 320
 num_polylines = num_of_src_polylines
-num_points_each_polylines = 5
+num_points_each_polylines = num_points_each_polyline
 in_channels = 2
 hidden_dim = 256
 T = 50
 loss_type = 'l2'
 beta_schedule = 'linear'
 clip_denoised = True
-predict_epsilon = True
+predict_epsilon = False
 t_dim = 16
 num_layers = 3
 num_pre_layers = 1
 out_channels = 10
 mlp_hidden_dim = 1024
+train_model = True
+
 mlp_out_dim = num_polylines * num_points_each_polylines * in_channels
 act_dim = num_polylines * num_points_each_polylines * in_channels
 
@@ -495,34 +495,47 @@ import torch.optim as optim
 optimizer = optim.Adam(model.parameters(), lr=lr)
 # T = 200
 
+# Check if training is required
+model_path = 'diffusion_model.pth'
+
+if os.path.exists(model_path) and train_model == False:
+    print(f"Loading model from {model_path}")
+    model.load_state_dict(torch.load(model_path))
+    train_model = False
+else:
+    print("Model not found, training a new model")
 # 训练模型
-model.train()
-for i in range(epoch):
-    loss = model.loss(x, state)
-    loss.backward()
-    if i % 100 == 0:
-        print(f'epoch: {i}, loss: {loss.item()}')
-    optimizer.step()
-    optimizer.zero_grad()
+from torch.optim.lr_scheduler import LambdaLR
+if train_model:
+    
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # Define the learning rate scheduler
+    def lr_lambda(epoch):
+        return 0.5 ** (epoch // 10000)
 
+    scheduler = LambdaLR(optimizer, lr_lambda)
+    model.train()
+    for i in range(epoch):
+        loss = model.loss(x, state)
+        loss.backward()
+        if i % 1000 == 0:
+            print(f'epoch: {i}, loss: {loss.item()}')
+        optimizer.step()
+        optimizer.zero_grad()
+        scheduler.step()
+    
+    # Save the trained model
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to {model_path}")
 
-
-
-# 给测试
+# Evaluate the model
 model.eval()
 result, diffusion_steps = model(state)
 print('result', result.shape)
-
-
+loss = model.loss(x, state)
 # 训练结束后绘制扩散过程的图像
 action = result
 x_test = x
-
-
-# action, diffusion_steps = model.sample(state_test)
-
-# 算下loss
-# loss = model.loss(x_test, state_test)
 print(f"action: {action.shape}; loss: {loss.item()}")
 
 # Output ground truth shape
@@ -538,8 +551,30 @@ print(action.shape)
 # Plot diffusion process
 num_steps = len(diffusion_steps)
 steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+# # 逆归一化
+x_test[:, :, :, 0] = (x_test[:, :, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
+x_test[:, :, :, 1] = (x_test[:, :, :, 1] + 0.5) * (x_max_1 - x_min_1) + x_min_1
+
+action[:, :, :, 0] = (action[:, :, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
+action[:, :, :, 1] = (action[:, :, :, 1] + 0.5) * (x_max_1 - x_min_1) + x_min_1
+# # 加上center object的位置
+# x_test = x_test + center_objects[:, None, None, 0:2]
+# action = action + center_objects[:, None, None, 0:2]
+
 x_test = x_test.cpu().detach().numpy()
 action = action.cpu().detach().numpy()
+
+# Calculate errors
+total_error = np.linalg.norm(action - x_test, axis=-1).sum()
+average_error = total_error / np.prod(x_test.shape[:-1])
+percentage_error = (total_error / np.linalg.norm(x_test, axis=-1).sum()) * 100
+
+print(f"Total Error: {total_error}")
+print(f"Average Error: {average_error}")
+print(f"Percentage Error: {percentage_error}%")
+
+
+
 
 
 plt.figure(figsize=(15, 5))
@@ -579,4 +614,216 @@ plt.legend()
 plt.tight_layout()
 plt.savefig('diffusion.png')
 plt.show()
+
+
+# Plotting each num_center_objects separately
+num_plots_per_row = 4
+num_rows = (num_center_objects + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(num_center_objects):
+    ax = axes[i]
+    for j in range(num_of_src_polylines):
+        valid_points = (abs(action[i, j, :, 0]) < 2) & (abs(action[i, j, :, 1]) < 2)
+        points_action = action[i, j, valid_points, :]
+        points_x_test = x_test[i, j, valid_points, :]
+        ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if j == 0 else "")
+        ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if j == 0 else "")
+    ax.set_title(f'Center Object {i}')
+    ax.legend()
+
+# Hide any unused subplots
+for i in range(num_center_objects, len(axes)):
+    fig.delaxes(axes[i])
+
+plt.tight_layout()
+plt.savefig('center_objects_comparison.png')
+plt.show()
+
+for step_idx in range(T):
+    step = diffusion_steps[step_idx].view(batch_size, num_polylines, num_points_each_polylines, in_channels)
+    # 逆归一化
+    step[:,:, :, 0] = (step[:,:, :, 0] + 0.5) * (x_max_0 - x_min_0) + x_min_0
+    step[:,:, :, 1] = (step[:,:, :, 1] + 0.5) * (x_max_1 - x_min_1) + x_min_1
+
+
+
+print('diffusion_steps',diffusion_steps[0].shape)
+# Plotting each num_center_objects separately
+num_plots_per_row = 4
+num_rows = (num_center_objects + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(num_center_objects):
+    ax = axes[i]
+    # # 画center object 和轨迹
+    # # 减去第一个点，得到相对位置
+    # obj_trajs_full = obj_trajs_full - obj_trajs_full[:, 0:1, :]
+    # obj_trajs_past = obj_trajs_past - obj_trajs_past[:, 0:1, :]
+    # obj_trajs_future = obj_trajs_future - obj_trajs_future[:, 0:1, :]
+    
+    # ax.plot(obj_trajs_past[track_index_to_predict[i], :, 0], obj_trajs_past[track_index_to_predict[i], :, 1], 'b', label='Past' if i == 1 else "")
+    # ax.plot(obj_trajs_future[track_index_to_predict[i], :, 0], obj_trajs_future[track_index_to_predict[i], :, 1], 'r', label='Future' if i == 1 else "")
+    # # ax.plot(center_objects[i, 0], center_objects[i, 1], 'ro', label='Center' if i == 1 else "")
+
+    for step_idx in steps_to_plot:
+        step = diffusion_steps[step_idx].view(batch_size, num_polylines, num_points_each_polylines, in_channels)
+
+        step = step[i,:,:, :].cpu().detach().numpy().reshape(-1, 2)
+        # print('step', step.shape)
+        ax.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
+    for j in range(num_of_src_polylines):
+
+
+        valid_points = (abs(action[i, j, :, 0]) < 2) & (abs(action[i, j, :, 1]) < 2)
+        points_action = action[i, j, valid_points, :]
+        points_x_test = x_test[i, j, valid_points, :]
+        ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if j == 0 else "")
+        ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if j == 0 else "")
+    ax.set_title(f'Center Object {i}')
+    ax.legend()
+
+# Hide any unused subplots
+for i in range(num_center_objects, len(axes)):
+    fig.delaxes(axes[i])
+
+plt.tight_layout()
+plt.savefig('DIffusionprocesscenter_objects_comparison.png')
+plt.show()
+
+
+
+
+
+
+
+num_plots_per_row = 11
+num_rows = (len(steps_to_plot) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(40, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(len(steps_to_plot)):
+    ax = axes[i]
+
+    step_idx = steps_to_plot[i]
+    step = diffusion_steps[step_idx].view(batch_size, num_polylines, num_points_each_polylines, in_channels)
+
+
+    step = step[0,:,:, :].cpu().detach().numpy().reshape(-1, 2)
+    # print('step', step.shape)
+    ax.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
+    for j in range(num_of_src_polylines):
+
+        valid_points = (abs(action[0, j, :, 0]) < 2) & (abs(action[0, j, :, 1]) < 2)
+        points_action = action[0, j, :, :]
+        points_x_test = x_test[0, j, :, :]
+        ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if j == 0 else "")
+        ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if j == 0 else "")
+    ax.set_title(f'Diffusion Step {step_idx}')
+    # ax.legend()
+
+
+
+plt.tight_layout()
+plt.savefig('1DIffusionprocesscenter_objects_comparison.png')
+plt.show()
+
+
+num_plots_per_row = 5
+steps_to_plot = range(T-5,T)
+num_rows = (len(steps_to_plot) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+
+for i in range(len(steps_to_plot)):
+    ax = axes[i]
+
+    step_idx = steps_to_plot[i]
+    step = diffusion_steps[step_idx].view(batch_size, num_polylines, num_points_each_polylines, in_channels)
+
+
+    step = step[0,:,:, :].cpu().detach().numpy().reshape(-1, 2)
+    # print('step', step.shape)
+    ax.scatter(step[:, 0], step[:, 1], label=f'Step {step_idx}')
+    for j in range(num_of_src_polylines):
+
+        valid_points = (abs(action[0, j, :, 0]) < 2) & (abs(action[0, j, :, 1]) < 2)
+        points_action = action[0, j, :, :]
+        points_x_test = x_test[0, j, :, :]
+        ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if j == 0 else "")
+        ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if j == 0 else "")
+    ax.set_title(f'Diffusion Step {step_idx}')
+    # ax.legend()
+
+
+
+plt.tight_layout()
+plt.savefig('1DIffusionprocesscenter_objects_comparison2.png')
+plt.show()
+
+
+
+
+# 画降噪过程
+# Plotting the results
+plt.figure(figsize=(15, 5))
+num_plots_per_row = 5
+polt_item = [0,2,3,4,6]
+num_rows = (len(polt_item) + num_plots_per_row - 1) // num_plots_per_row
+
+fig, axes = plt.subplots(num_rows, num_plots_per_row, figsize=(20, 5 * num_rows))
+axes = axes.flatten()
+
+num_steps = len(diffusion_steps)
+steps_to_plot = [int(i * num_steps / 10) for i in range(10)] + [num_steps - 1]
+print('steps_to_plot', steps_to_plot)
+for i in range(len(polt_item)):
+    ax = axes[i]
+    for j in range(len(steps_to_plot)):
+        step = diffusion_steps[steps_to_plot[j]].view(batch_size, num_polylines, num_points_each_polyline, in_channels)
+        step = step[polt_item[i],:,:, :].cpu().detach().numpy().reshape(-1, 2)
+
+        # 画点
+        # ax.plot(points[:, 0], points[:, 1], 'ro', alpha=j / num_steps)
+        ax.plot(step[:, 0], step[:, 1],'ro', label=f'Step {steps_to_plot[j]}', alpha=steps_to_plot[j] / num_steps)
+
+    
+    for j in range(num_of_src_polylines):
+        valid_points = (abs(action[polt_item[i], j, :, 0]) < 2) & (abs(action[polt_item[i], j, :, 1]) < 2)
+        points_action = action[polt_item[i], j, valid_points, :]
+        points_x_test = x_test[polt_item[i], j, valid_points, :]
+        ax.plot(points_action[:, 0], points_action[:, 1], 'r', label='Predicted' if j == 0 else "")
+        ax.plot(points_x_test[:, 0], points_x_test[:, 1], 'g', label='Ground Truth' if j ==0 else "")
+
+
+    ax.set_title(f'Center Object {i}')
+
+
+# plt.title('Predicted vs Ground Truth Polylines')
+plt.legend()
+plt.tight_layout()
+plt.savefig('Diffusion5polylinesMAP.png')
+plt.show()
+
+
+polt_item = [0,2,3,4,6]
+#截取
+x_test = x_test[polt_item]
+action = action[polt_item]
+
+# Calculate errors
+total_error = np.linalg.norm(action - x_test, axis=-1).sum()
+average_error = total_error / np.prod(x_test.shape[:-1])
+percentage_error = (total_error / np.linalg.norm(x_test, axis=-1).sum()) * 100
+
+print(f"Total Error: {total_error}")
+print(f"Average Error: {average_error}")
+print(f"Percentage Error: {percentage_error}%")
+
 

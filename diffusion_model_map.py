@@ -169,12 +169,25 @@ class Diffusion(nn.Module):
         return posterior_mean, posterior_variance, posterior_log_variance
 
     def predict_start_from_noise(self, x, t, pred_noise):
-        return (
-            extract(self.sqrt_recip_alphas_cumprod, t, x.shape) * x
-            - extract(self.sqrt_recipm_alphas_cumprod, t, x.shape) * pred_noise
-        )
+        '''
+            if self.predict_epsilon, model output is (scaled) noise;
+            otherwise, model predicts x0 directly
+        '''
+        if self.predict_epsilon:
+            return (
+                    extract(self.sqrt_recip_alphas_cumprod, t, x.shape) * x -
+                    extract(self.sqrt_recipm_alphas_cumprod, t, x.shape) * pred_noise
+            )
+        else:
+            return pred_noise
+        
+        # return (
+        #     extract(self.sqrt_recip_alphas_cumprod, t, x.shape) * x
+        #     - extract(self.sqrt_recipm_alphas_cumprod, t, x.shape) * pred_noise
+        # )
 
     def p_mean_variance(self, x, t, state):
+
         pred_noise = self.model(x, t, state)
         x_recon = self.predict_start_from_noise(x, t, pred_noise)
         if self.clip_denoised:
@@ -186,6 +199,7 @@ class Diffusion(nn.Module):
         batchsize, *_, device = *x.shape, x.device
         model_mean, model_log_variance = self.p_mean_variance(x, t, state)
         noise = torch.randn_like(x)
+        # no noise when t == 0
         nonzero_mask = (1 - (t == 0).float()).reshape(batchsize, *((1,) * (len(x.shape) - 1)))
         return model_mean + torch.exp(0.5 * model_log_variance) * noise * nonzero_mask
 
