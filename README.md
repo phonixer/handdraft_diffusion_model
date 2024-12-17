@@ -8,6 +8,18 @@
 ## 2024 1121
 看一下MID的数据处理是怎么处理的
 
+## 2024 1217
+学习概率视角下的生成模型的推导
+
+$$p_x$$
+
+$$\begin{equation}
+  g\left(k\right) = \binom{n}{k} p^k\left(1-p\right)^{n-k}
+\label{binom2}
+\end{equation}$$
+
+$\begin{aligned} \boldsymbol{x}_t =&\, \alpha_t \boldsymbol{x}_{t-1} + \beta_t \boldsymbol{\varepsilon}_t \\ =&\, \alpha_t \big(\alpha_{t-1} \boldsymbol{x}_{t-2} + \beta_{t-1} \boldsymbol{\varepsilon}_{t-1}\big) + \beta_t \boldsymbol{\varepsilon}_t \\ =&\,\cdots\\ =&\,(\alpha_t\cdots\alpha_1) \boldsymbol{x}_0 + \underbrace{(\alpha_t\cdots\alpha_2)\beta_1 \boldsymbol{\varepsilon}_1 + (\alpha_t\cdots\alpha_3)\beta_2 \boldsymbol{\varepsilon}_2 + \cdots + \alpha_t\beta_{t-1} \boldsymbol{\varepsilon}_{t-1} + \beta_t \boldsymbol{\varepsilon}_t}_{\text{多个相互独立的正态噪声之和}} \end{aligned} \label{eq:expand}\\$
+
 ### Process_data
 这个代码的主要功能是处理和预处理轨迹数据，并将其保存为 .pkl 文件，以便后续用于训练和评估轨迹预测模型。以下是代码的详细解释：
 
